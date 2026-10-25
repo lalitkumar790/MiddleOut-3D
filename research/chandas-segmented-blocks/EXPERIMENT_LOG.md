@@ -22,3 +22,14 @@ The benchmark compares full bitstream size, encode/decode time, max vertex error
 ## Historical framing
 
 The algorithm borrows the general rank/unrank/combinatorics motif studied in Piṅgala's prosody tradition. It is a modern DP partitioning and byte-cost objective, not a codec described in the Chandaḥśāstra. See Jayant Shah's historical review hosted by the University of Hyderabad (https://sanskrit.uohyd.ac.in/faculty/amba/PUBLICATIONS/Lectures/UoHyd/Material/Pingala.pdf); the interpretation of particular later meru-prastāra readings is debated. All results will be judged on implementation and benchmarks, not the cultural analogy.
+
+
+## E001 — DP-segmented adaptive Chandas residual blocks
+
+- GitHub Actions run: https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40226491358
+- Source commit tested: 8adc3d73b0eb319632025120de899e9b6bfde34e.
+- Configuration: six deterministic synthetic fixtures, 16-bit positions, three vertex orderings, four face-stream strategies, and three encode/decode timing repetitions.
+- The workflow required every codec/order/face-strategy row to pass exact oriented topology and the common per-axis quantization error bound before recording totals.
+- Aggregate bytes across the same mesh/order/face-strategy grid: chandas_segmented_tangent=698241 B; chandas_adaptive_tangent=700841 B; chandas_tangent=707773 B; weighted_tangent=698389 B; baseline=782993 B.
+- Paired wins/ties/losses (v8 compared to each method): chandas_adaptive_tangent 48/0/24 of 72; chandas_tangent 52/0/20 of 72; weighted_tangent 32/0/40 of 72; baseline 56/0/16 of 72.
+- These are synthetic-fixture results only. The segmentation DP minimizes framed pre-zlib bytes; complete MO3D payload bytes determine the empirical result. No general compression or Draco superiority is inferred.
