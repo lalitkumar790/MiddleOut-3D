@@ -311,7 +311,7 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
 FACE_ORDERINGS = ("source", "bfs")
-AUTO_FACE_ORDERINGS = ("source",)
+AUTO_FACE_ORDERINGS = ("source", "bfs")
 # Predictive cost-guided traversal remains available experimentally, but the first
 # benchmark found it consistently larger and much slower than source/BFS. Keep
 # the user-facing rate-first auto search on the three proven orderings until a
@@ -1067,25 +1067,27 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         for ordering_index, candidate_ordering in enumerate(AUTO_ORDERINGS):
             traversal = vertex_order_for_mesh(vertices, faces, candidate_ordering)
             ordered_vertices = vertices[traversal]
-            for method_index, candidate_method in enumerate(CODEC_METHODS):
-                candidate_ratios = normal_ratios if candidate_method == "normal_fine_tangent" else (float(normal_step_ratio),)
-                for ratio_index, candidate_ratio in enumerate(candidate_ratios):
-                    try:
-                        candidate = encode_mesh(
-                            vertices, faces, bits=bits, level=level,
-                            method=candidate_method, ordering=candidate_ordering,
-                            normal_step_ratio=candidate_ratio
-                        )
-                        decoded_vertices, _, _ = decode_mesh(candidate)
-                    except CodecError:
-                        continue
-                    candidate_error = np.linalg.norm(decoded_vertices - ordered_vertices, axis=1)
-                    if candidate_error.size and float(candidate_error.max()) > max_error_budget * 1.0001 + 1e-12:
-                        continue
-                    key = (len(candidate), method_index, ordering_index, ratio_index)
-                    if best_key is None or key < best_key:
-                        best_key = key
-                        best_payload = candidate
+            for face_order_index, candidate_face_ordering in enumerate(AUTO_FACE_ORDERINGS):
+                for method_index, candidate_method in enumerate(CODEC_METHODS):
+                    candidate_ratios = normal_ratios if candidate_method == "normal_fine_tangent" else (float(normal_step_ratio),)
+                    for ratio_index, candidate_ratio in enumerate(candidate_ratios):
+                        try:
+                            candidate = encode_mesh(
+                                vertices, faces, bits=bits, level=level,
+                                method=candidate_method, ordering=candidate_ordering,
+                                normal_step_ratio=candidate_ratio,
+                                face_ordering=candidate_face_ordering
+                            )
+                            decoded_vertices, _, _ = decode_mesh(candidate)
+                        except CodecError:
+                            continue
+                        candidate_error = np.linalg.norm(decoded_vertices - ordered_vertices, axis=1)
+                        if candidate_error.size and float(candidate_error.max()) > max_error_budget * 1.0001 + 1e-12:
+                            continue
+                        key = (len(candidate), method_index, ordering_index, face_order_index, ratio_index)
+                        if best_key is None or key < best_key:
+                            best_key = key
+                            best_payload = candidate
         if best_payload is None:
             raise CodecError("no available encoder could encode this mesh")
         return best_payload
