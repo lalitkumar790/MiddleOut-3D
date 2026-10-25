@@ -1,6 +1,14 @@
 name: Benchmark sample meshes
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "middleout3d/**"
+      - "tests/**"
+      - ".github/workflows/benchmark.yml"
+      - "requirements.txt"
+      - "pyproject.toml"
   workflow_dispatch:
     inputs:
       bits:
@@ -31,13 +39,31 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Generate deterministic benchmark meshes
         run: python -m middleout3d generate-fixtures --out samples
-      - name: Run benchmark
+      - name: Run baseline versus Prithvi benchmark
         run: |
-          python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ inputs.bits }}" --repeats "${{ inputs.repeats }}"
+          python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '5' }}"
+      - name: Print per-mesh comparison summary
+        run: |
+          python - <<'PY'
+          import json
+          report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
+          print("mesh | baseline bytes | Prithvi bytes | size reduction vs baseline | topology exact | max position error")
+          for row in report["results"]:
+              print(
+                  f'{row["name"]} | {row["mo3d_lossy_geometry_bytes"]} | {row["prithvi_bytes"]} | '
+                  f'{row["prithvi_size_reduction_vs_mo3d_baseline_pct"]}% | '
+                  f'{row["prithvi_topology_exact"]} | {row["prithvi_geometry_max_vertex_error"]}'
+              )
+          if report["errors"]:
+              print("BENCHMARK ERRORS:", report["errors"])
+              raise SystemExit(1)
+          if not all(r["prithvi_decoder_bytes_exact"] and r["baseline_prithvi_quantized_positions_equal"] for r in report["results"]):
+              raise SystemExit("Prithvi reconstruction checks failed")
+          PY
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:
-          name: middleout3d-benchmark-${{ inputs.bits }}bits
+          name: middleout3d-benchmark-${{ github.event.inputs.bits || '16' }}bits
           path: |
             results/ci-benchmark.json
             results/ci-benchmark.csv
