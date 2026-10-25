@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import trimesh
 
-from middleout3d.codec import CodecError, decode_mesh, encode_mesh
+from middleout3d.codec import CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh
 
 
 class CodecTests(unittest.TestCase):
@@ -56,6 +56,48 @@ class CodecTests(unittest.TestCase):
     def test_prithvi_rejects_unsupported_method(self):
         with self.assertRaises(CodecError):
             encode_mesh(self.vertices, self.faces, method="magic")
+
+    def test_bfs_and_morton_are_valid_permutations_and_preserve_face_mapping(self):
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                self.assertEqual(len(order), len(self.vertices))
+                self.assertTrue(np.array_equal(np.sort(order), np.arange(len(self.vertices))))
+                reordered_vertices, reordered_faces, returned_order = reorder_mesh(
+                    self.vertices, self.faces, ordering
+                )
+                self.assertTrue(np.array_equal(order, returned_order))
+                self.assertTrue(np.array_equal(reordered_vertices, self.vertices[order]))
+                self.assertTrue(np.array_equal(order[reordered_faces], self.faces))
+                self.assertTrue(np.all(reordered_faces >= 0))
+                self.assertTrue(np.all(reordered_faces < len(self.vertices)))
+
+    def test_all_orderings_roundtrip_baseline_and_prithvi(self):
+        for ordering in ("source", "bfs", "morton"):
+            order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+            for method in ("baseline", "prithvi"):
+                with self.subTest(ordering=ordering, method=method):
+                    payload = encode_mesh(
+                        self.vertices, self.faces, bits=16, method=method, ordering=ordering
+                    )
+                    decoded_vertices, decoded_faces, header = decode_mesh(payload)
+                    restored_vertices = np.empty_like(decoded_vertices)
+                    restored_vertices[order] = decoded_vertices
+                    restored_faces = order[decoded_faces]
+                    self.assertTrue(np.array_equal(restored_faces, self.faces))
+                    self.assertTrue(np.allclose(restored_vertices, self.vertices, atol=1e-4))
+                    self.assertEqual(header["vertex_ordering"], ordering)
+
+    def test_prithvi_and_baseline_positions_equal_for_each_ordering(self):
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                base, _, _ = decode_mesh(encode_mesh(
+                    self.vertices, self.faces, bits=16, method="baseline", ordering=ordering
+                ))
+                predicted, _, _ = decode_mesh(encode_mesh(
+                    self.vertices, self.faces, bits=16, method="prithvi", ordering=ordering
+                ))
+                self.assertTrue(np.array_equal(base, predicted))
 
     def test_legacy_v1_header_without_new_coder_fields_still_decodes(self):
         payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
