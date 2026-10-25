@@ -195,3 +195,45 @@ V7 changes the experiment rather than hiding this outcome:
 The comparison is a local byte-count decision, not a promise of a smaller total file: the new seed framing, residual count, mode flags, and zlib wrapper carry overhead. The hosted v7 benchmark must tell us whether the complete stream beats v4 on the mesh families we tested.
 
 The next step is not automatically adding more Vedic analogies. It is to inspect which blocks choose enumerative mode, measure the share of residuals that are zero, compare v7 against v4 and Draco under the same error target, and then test on public, representative meshes. If the extra coding layer is not useful after overhead, we should drop it or reserve it only for meshes where it wins.
+
+
+## Indian mathematical pattern traditions: what is grounded, what is analogy
+
+### Piṅgala and enumerative coding
+
+Jayant Shah's historical paper, *A History of Piṅgala's Combinatorics*, describes the *Chandaḥśāstra* as including procedures to list all forms of an n-syllable metre, recover a pattern from its serial position, determine a pattern's serial position, and count patterns with a fixed number of short syllables. It also notes a historiographical debate about attributing particular forms of *meru-prastāra* to Piṅgala. Source: [University of Hyderabad-hosted paper](https://sanskrit.uohyd.ac.in/Algorithms_in_Ancient_India/Material/Pingala.pdf).
+
+The software connection is enumerative coding. A subset of \(k\) nonzero residual positions inside a block of \(n\) symbols has \(\binom{n}{k}\) possibilities, so a rank requires at least \(\lceil\log_2\binom{n}{k}\rceil\) bits in an ideal fixed-length representation. MO3D v6/v7 use a combinatorial-number-system rank for the nonzero positions, plus the nonzero residual values. This is a modern implementation inspired by ranking/unranking—not a claim that Piṅgala's text specifies this particular codec.
+
+**Current empirical finding:** on the six synthetic meshes and three orderings in the archived extended run, fixed sparse enumeration v6 and the adaptive v7 variant did not beat weighted tangent coding in aggregate total size. v6 was about 1.4% larger; v7 was also slightly larger. Per-mesh exceptions exist, but we must not present the historical connection as a compression gain without evidence. The block coder may still be useful on different residual distributions.
+
+### Śulbasūtras and geometry
+
+The Śulbasūtras are a real source of geometric constructions, including right-triangle relations and transformations between shapes/areas. See S. G. Dani's [2024 historical review](https://doi.org/10.1007/978-3-031-40846-5_114) and Dani & Limaye's [2021 discussion](https://publications.azimpremjiuniversity.edu.in/2784/). The potential inspiration for MiddleOut-3D is to seek representations that preserve a clearly stated geometric invariant while changing coordinate systems. The tangent-space codec is a modern computer-graphics method; we do not claim it is derived from a Śulbasūtra.
+
+### Vedānta Deśika and *Citra Paddhati*
+
+The *Citra Paddhati* in *Pādukā Sahasram* is described in a Tirumala Tirupati Devasthanams publication as using patterned arrangements of verses. Source: [Vedantha Deshika publication](https://ebooks.tirumala.org/downloads/Vedantha%20Deshika.pdf). This is a literary pattern tradition, not evidence of a mesh-compression technique. A possible engineering analogy is that traversal order can be a designed path through a graph, but a Desika-inspired traversal must be evaluated like any other heuristic; no special historical claim is made.
+
+### Modern papers that already outperform naive approaches
+
+- Vaněček, Hácha and Váša, [*A Predictor for Triangle Mesh Compression Working in Tangent Space* (GRAPP 2024)](https://dspace.zcu.cz/items/07738464-8ce9-403f-b870-5d6fb1bc3d93), combines local-coordinate residuals with weighted parallelogram prediction and reports improved rate-distortion over Draco on its benchmark. Our tangent methods are exploratory adaptations, not an exact reproduction.
+- Ren et al., [*Neural Compression for 3D Geometry Sets* (ICCV 2025)](https://openaccess.thecvf.com/content/ICCV2025/html/Ren_Neural_Compression_for_3D_Geometry_Sets_ICCV_2025_paper.html), uses a learned implicit representation and shared decoder weights to compress large sets of meshes. The reported up-to-900× figure concerns a particular collection-compression setup and is not directly comparable to one standalone geometry bitstream.
+
+## New experiment: predictive-cost-guided vertex ordering
+
+The original source/BFS/Morton experiment suggests the order in which a mesh is traversed can materially change residual and connectivity streams. The new \`predictive\` ordering is a greedy, encoder-side heuristic:
+
+1. Start from a deterministic large-area seed triangle (fallbacks handle unreferenced vertices and disconnected pieces).
+2. Maintain vertices whose candidate triangle stencils become available as earlier neighbors are visited.
+3. Estimate residual-varint cost under a classic parallelogram predictor and a valence-weighted predictor.
+4. Greedily visit the available candidate with the lowest estimated cost; ties break deterministically by error, predictor ID, and stencil.
+5. Remap face indices consistently and benchmark it alongside source, BFS, and Morton orders under each codec and against Draco.
+
+Unlike the historical text, this heuristic is modern graph traversal. The connection to the older pattern traditions is only the broad idea that an ordering can be designed rather than fixed. The key hypothesis is that cost-driven ordering will reduce the residual and face-index streams enough to offset its search overhead.
+
+The current CI workflow is testing the new order on six synthetic meshes, 16 bits per axis, and five timed repetitions. Required acceptance checks are: permutation validity, topology equivalence after remapping, matching baseline/Prithvi quantized positions, geometry-error bounds for the tangent variants, and a Draco comparison at a measured error budget. The benchmark will decide whether this ordering should be kept or reverted.
+
+## Historical note on “Vedic Mathematics”
+
+The popular 16-sūtra system in Bharati Krishna Tirtha's modern book is not the same as a well-established corpus of algorithmic sutras in extant Vedic texts. S. G. Dani's *Vedic Mathematics in Perspective* discusses the weak documentary basis for attributing that system directly to an extant Atharvaveda appendix: [TIFR PDF](https://www.math.tifr.res.in/~dani/vmissc.pdf). For reproducible research, this project prioritizes identifiable sources such as Piṅgala's *Chandaḥśāstra* and the Śulbasūtras, and treats all modern analogies as hypotheses.
