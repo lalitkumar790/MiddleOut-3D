@@ -106,6 +106,68 @@ def _benchmark_coder(
     return metrics, decoded_vertices, decoded_faces
 
 
+def _faces_topology_equivalent(left: np.ndarray, right: np.ndarray) -> bool:
+    """Compare triangle connectivity while ignoring face-list order and winding."""
+    if left.shape != right.shape:
+        return False
+    left_sorted = np.sort(np.asarray(left, dtype=np.int64), axis=1)
+    right_sorted = np.sort(np.asarray(right, dtype=np.int64), axis=1)
+    left_sorted = left_sorted[np.lexsort((left_sorted[:, 2], left_sorted[:, 1], left_sorted[:, 0]))]
+    right_sorted = right_sorted[np.lexsort((right_sorted[:, 2], right_sorted[:, 1], right_sorted[:, 0]))]
+    return bool(np.array_equal(left_sorted, right_sorted))
+
+
+def _benchmark_draco(
+    vertices: np.ndarray, faces: np.ndarray, bits: int, repeats: int, ordering: str
+) -> dict[str, Any]:
+    """Benchmark Google's Draco through the optional DracoPy Python wrapper."""
+    try:
+        import DracoPy
+    except ImportError as exc:
+        raise RuntimeError(
+            "DracoPy is not installed; install requirements-benchmark.txt to run the Draco comparison"
+        ) from exc
+
+    ordered_vertices, ordered_faces, permutation = reorder_mesh(vertices, faces, ordering)
+    payload, encode_seconds = _timed(
+        lambda: DracoPy.encode(
+            ordered_vertices,
+            faces=ordered_faces,
+            quantization_bits=bits,
+            compression_level=7,
+            preserve_order=True,
+        ),
+        repeats,
+    )
+    decoded, decode_seconds = _timed(lambda: DracoPy.decode(payload), repeats)
+    decoded_vertices = np.asarray(decoded.points, dtype=np.float64)
+    decoded_faces = np.asarray(decoded.faces, dtype=np.int64)
+    if decoded_vertices.ndim != 2 or decoded_vertices.shape != ordered_vertices.shape:
+        raise ValueError(
+            f"Draco decoded vertex shape {decoded_vertices.shape} does not match input {ordered_vertices.shape}"
+        )
+    if decoded_faces.ndim != 2 or decoded_faces.shape[1] != 3:
+        raise ValueError(f"Draco decoded face array has unexpected shape {decoded_faces.shape}")
+
+    restored_vertices = np.empty_like(decoded_vertices)
+    restored_vertices[permutation] = decoded_vertices
+    restored_faces = permutation[decoded_faces]
+    errors = np.linalg.norm(restored_vertices - vertices, axis=1)
+    return {
+        "ordering": ordering,
+        "bytes": len(payload),
+        "encode_median_ms": round(encode_seconds * 1000, 4),
+        "decode_median_ms": round(decode_seconds * 1000, 4),
+        "max_vertex_error": float(errors.max()) if errors.size else 0.0,
+        "rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
+        "topology_equivalent": _faces_topology_equivalent(restored_faces, faces),
+        "topology_exact_face_order": bool(np.array_equal(restored_faces, faces)),
+        "quantization_bits": bits,
+        "compression_level": 7,
+        "ordering": ordering,
+    }
+
+
 def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, Any]:
     original = path.read_bytes()
     vertices, faces, _ = load_mesh(path)
@@ -135,6 +197,7 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         positions_equal = bool(
             np.array_equal(coder_decoded_vertices["baseline"], coder_decoded_vertices["prithvi"])
         )
+        draco_metrics = _benchmark_draco(vertices, faces, bits, repeats, ordering)
         result: dict[str, Any] = {
             "ordering": ordering,
             "baseline_bytes": baseline_metrics["bytes"],
@@ -180,6 +243,17 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             "weighted_tangent_predictive_vertices": weighted_metrics["predictive_vertices"],
             "tangent_residual_step": tangent_metrics["tangent_residual_step"],
             "weighted_tangent_residual_step": weighted_metrics["tangent_residual_step"],
+            "draco_bytes": draco_metrics["bytes"],
+            "draco_size_reduction_vs_baseline_pct": round(
+                (1 - draco_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
+            "draco_encode_median_ms": draco_metrics["encode_median_ms"],
+            "draco_decode_median_ms": draco_metrics["decode_median_ms"],
+            "draco_max_vertex_error": draco_metrics["max_vertex_error"],
+            "draco_rmse_vertex_distance": draco_metrics["rmse_vertex_distance"],
+            "draco_topology_equivalent": draco_metrics["topology_equivalent"],
+            "draco_topology_exact_face_order": draco_metrics["topology_exact_face_order"],
+            "draco_quantization_bits": draco_metrics["quantization_bits"],
             "quantized_positions_equal": positions_equal,
             "candidate_metrics": coder_metrics,
         }
@@ -260,6 +334,13 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "weighted_tangent_geometry_max_vertex_error": source["weighted_tangent_max_vertex_error"],
         "weighted_tangent_geometry_rmse_vertex_distance": source["weighted_tangent_rmse_vertex_distance"],
         "weighted_tangent_topology_exact": source["weighted_tangent_topology_exact"],
+        "draco_bytes": source["draco_bytes"],
+        "draco_size_reduction_vs_baseline_pct": source["draco_size_reduction_vs_baseline_pct"],
+        "draco_encode_median_ms": source["draco_encode_median_ms"],
+        "draco_decode_median_ms": source["draco_decode_median_ms"],
+        "draco_geometry_max_vertex_error": source["draco_max_vertex_error"],
+        "draco_geometry_rmse_vertex_distance": source["draco_rmse_vertex_distance"],
+        "draco_topology_equivalent": source["draco_topology_equivalent"],
         "bbox_diagonal": diagonal,
         "max_error_bound_estimate": theoretical_error_bound,
         "topology_exact": source["baseline_topology_exact"],
@@ -324,7 +405,7 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
         "report_version": 2,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
-        "configuration": {"position_bits": bits, "repeats": repeats, "methods": list(CODEC_METHODS), "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
+        "configuration": {"position_bits": bits, "repeats": repeats, "methods": list(CODEC_METHODS), "vertex_orderings": list(ORDERINGS), "external_baseline": "Google Draco via DracoPy, same nominal quantization_bits as the MO3D position_bits setting, compression_level=7", "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
         "results": rows, "errors": errors,
         "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements. Tangent methods target the baseline's conservative geometric error bound. Auto selection chooses the shortest observed candidate bitstream across all tested methods and orderings, at increased encoding cost.",
     }
