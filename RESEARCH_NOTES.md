@@ -249,7 +249,7 @@ The failure is informative: optimizing estimated coordinate residuals alone igno
 
 ## Research experiment: DP-segmented adaptive enumerative residual coding (MO3D v8)
 
-**Status: implemented on \`research/chandas-segmented-blocks\`; benchmark pending.**
+**Status: E001 benchmark complete; optimized cost computation in E002.**
 
 ### Mathematical objective
 
@@ -263,9 +263,9 @@ For residual sequence \(r_0,\ldots,r_{N-1}\), the encoder solves the segmentatio
 \[
 D(i)=\min_{n\in\mathcal{B}(i)}\{L_f(n)+\min(L_d(r_{i:i+n}),L_s(r_{i:i+n}))+D(i+n)\},\quad D(N)=0,
 \]
-where \(\mathcal{B}(i)\) contains supported lengths that fit and permits a shorter block only when it is the final tail. Ties are deterministic. This is \(O(NK B_{max})\) time for \(K=5\) candidate lengths in the straightforward implementation and \(O(N)\) backpointer/cost storage; in practice it bounds the candidate scan to five lengths per starting offset and at most 256 symbols per candidate.
+where \(\mathcal{B}(i)\) contains supported lengths that fit and permits a shorter block only when it is the final tail. Ties are deterministic. The initial implementation recomputed each candidate block's encoded sparse/direct body and took \(O(NK B_{max})\) work for \(K=5\) block lengths. E002 replaces candidate-body encoding with prefix sums for direct-varint bytes, nonzero amplitudes and nonzero counts; each candidate cost is then computed in constant time (apart from bounded-integer combination arithmetic), giving \(O(NK)\) DP time and \(O(N)\) prefix/backpointer storage.
 
-This minimizes the exact *uncompressed block-stream byte count*, not zlib size. As the outer zlib compressor has context across boundaries, the recurrence is a proxy, and the candidate must be compared by complete MO3D payload bytes, encode/decode time, maximum vertex error, RMSE and exact topology. Version 8 uses a new \`MO3D\\x08\` signature / \`CHS3\` residual signature so v1-v7 bitstreams and their decoder paths are unchanged.
+This minimizes the exact *uncompressed block-stream byte count*, not zlib size. As the outer zlib compressor has context across boundaries, the recurrence is a proxy, and the candidate must be compared by complete MO3D payload bytes, encode/decode time, maximum vertex error, RMSE and exact topology. Version 8 uses a new `MO3D\x08` signature / `CHS3` residual signature so v1-v7 bitstreams and their decoder paths are unchanged.
 
 ### Historical and modern distinctions
 
@@ -278,6 +278,10 @@ The inspiration is the general rank/unrank pattern in Piṅgala's prosody algori
 - Reject or narrow the method if full-payload bytes worsen, speed overhead is excessive, or its gains are limited to tiny synthetic fixtures. No compression win is claimed before the benchmark artifact is available.
 
 
+
+### E001 measured result
+
+The CI benchmark completed with zero benchmark errors across six deterministic synthetic meshes, 16-bit positions, three vertex orderings, four face-stream strategies and three timing repeats. Aggregate bytes over the same 144 mesh/method/order result rows and four face strategies: v8 segmented adaptive = 698,241 bytes; v7 fixed-block adaptive = 700,841 bytes (0.371% smaller for v8); v6 Chandas sparse = 707,773 bytes; weighted tangent = 698,389 bytes; baseline = 782,993 bytes. In 72 paired mesh/order/face-strategy cases, v8 beat v7 in 48 and lost in 24. It beat weighted tangent in only 32 and lost in 40. Sum of v8 encoding medians over its 72 cases was approximately 200.5 seconds. These synthetic results suggest a small rate effect but poor efficiency in the initial implementation, not a robust algorithmic advantage.
 ## Relevant mesh-connectivity literature: next target
 
 The current prototype serializes the face array as flat zigzag/varint index deltas followed by zlib. This is simple but leaves connectivity compression well behind established topology encoders.

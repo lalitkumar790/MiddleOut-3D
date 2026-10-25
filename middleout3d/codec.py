@@ -262,15 +262,31 @@ SEGMENTED_CHANDAS_BLOCK_SIZES = (16, 32, 64, 128, 256)
 
 
 def _encode_chandas_segmented_residuals(values: list[int]) -> bytes:
-    """Use dynamic programming to choose direct/sparse blocks and block lengths.
+    """Choose framed direct/sparse blocks using a minimum-byte segmentation DP.
 
-    The objective is the exact pre-zlib byte count, including each block's length
-    and mode header. This is only a rate proxy: the final candidate is judged by
-    the complete MO3D payload after zlib compression.
+    Prefix sums make each block-cost query constant time, with five fixed size
+    choices. The DP minimizes exact pre-zlib bytes; complete payload size decides
+    whether the heuristic helps after zlib compression.
     """
     count = len(values)
     if count == 0:
         return b""
+
+    # Prefix sums make direct and sparse block costs O(1) per candidate.
+    # A sparse block's pattern-rank byte count depends on (length, nonzero count),
+    # not on the actual positions; nonzero amplitude varints are shared with the
+    # direct representation. Avoid encoding every candidate block inside the DP.
+    direct_prefix = [0] * (count + 1)
+    amplitude_prefix = [0] * (count + 1)
+    nonzero_prefix = [0] * (count + 1)
+    for index, raw_value in enumerate(values):
+        encoded_length = len(_encode_varint(_zigzag_encode(int(raw_value))))
+        direct_prefix[index + 1] = direct_prefix[index] + encoded_length
+        is_nonzero = int(raw_value) != 0
+        amplitude_prefix[index + 1] = (
+            amplitude_prefix[index] + (encoded_length if is_nonzero else 0)
+        )
+        nonzero_prefix[index + 1] = nonzero_prefix[index] + int(is_nonzero)
 
     costs = [0] * (count + 1)
     choices: list[tuple[int, int] | None] = [None] * count
@@ -282,16 +298,19 @@ def _encode_chandas_segmented_residuals(values: list[int]) -> bytes:
         best_key: tuple[int, int, int] | None = None
         best_choice: tuple[int, int] | None = None
         for block_len in lengths:
-            block = values[start:start + block_len]
-            direct = b"".join(
-                _encode_varint(_zigzag_encode(int(value))) for value in block
+            end = start + block_len
+            nonzero_count = nonzero_prefix[end] - nonzero_prefix[start]
+            direct_bytes = direct_prefix[end] - direct_prefix[start]
+            sparse_bytes = (
+                len(_encode_varint(nonzero_count))
+                + ((math.comb(block_len, nonzero_count) - 1).bit_length() + 7) // 8
+                + amplitude_prefix[end] - amplitude_prefix[start]
             )
-            sparse = _encode_chandas_sparse_block(block)
-            mode = 1 if len(sparse) < len(direct) else 0
-            body = sparse if mode else direct
+            mode = 1 if sparse_bytes < direct_bytes else 0
+            body_bytes = sparse_bytes if mode else direct_bytes
             candidate_cost = (
-                len(_encode_varint(block_len)) + 1 + len(body)
-                + costs[start + block_len]
+                len(_encode_varint(block_len)) + 1 + body_bytes
+                + costs[end]
             )
             # On an exact tie, prefer longer blocks, then direct coding.
             key = (candidate_cost, -block_len, mode)

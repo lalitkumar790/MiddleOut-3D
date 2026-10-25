@@ -1,7 +1,7 @@
 # DP-segmented adaptive enumerative residual coding — experiment E000
 
 **Branch:** research/chandas-segmented-blocks  
-**Status:** implementation committed for CI; full payload benchmark pending.
+**Status:** E001 benchmark complete; E002 cost-computation optimization committed for CI.
 
 ## Hypothesis
 
@@ -33,3 +33,9 @@ The algorithm borrows the general rank/unrank/combinatorics motif studied in Pi�
 - Aggregate bytes across the same mesh/order/face-strategy grid: chandas_segmented_tangent=698241 B; chandas_adaptive_tangent=700841 B; chandas_tangent=707773 B; weighted_tangent=698389 B; baseline=782993 B.
 - Paired wins/ties/losses (v8 compared to each method): chandas_adaptive_tangent 48/0/24 of 72; chandas_tangent 52/0/20 of 72; weighted_tangent 32/0/40 of 72; baseline 56/0/16 of 72.
 - These are synthetic-fixture results only. The segmentation DP minimizes framed pre-zlib bytes; complete MO3D payload bytes determine the empirical result. No general compression or Draco superiority is inferred.
+
+
+
+## E002 — prefix-sum cost evaluation optimization
+
+The v8 E001 benchmark passed topology/error checks and reduced complete synthetic payload bytes by 0.371% versus fixed-block adaptive Chandas, but its DP evaluation repeatedly encoded candidate blocks. The revised implementation precomputes direct-varint length sums, nonzero-amplitude byte sums and nonzero counts. Since the sparse position-rank byte length is determined by block length and nonzero count, candidate body length can be calculated exactly as varint(count) + ceil(log2(comb(length,count))) rounded to bytes + nonzero-amplitude varints. This preserves the same pre-zlib byte objective and deterministic tie-breaks while reducing the DP from O(N K Bmax) scanning work to O(N K) candidate evaluation plus one pass to emit chosen blocks. The existing exhaustive small-sequence test continues to check optimal cost. E002's full-payload results are pending.
