@@ -97,3 +97,12 @@ Terms must include estimated signaling/model overhead, not just raw residual ent
 - Next: if DP improves actual bytes, validate on held-out licensed meshes and inspect encode-time overhead; otherwise keep it experimental and test better objectives.
 
 - Timing checkpoint from the archived per-case medians (sum across 126 cases, not wall-clock CI duration): greedy rotate encode medians summed to 16,189.86 ms vs 17,938.74 ms for DP (+10.80%); decode medians summed to 13,092.17 ms vs 13,122.58 ms (+0.23%). This confirms the small 0.1792% byte gain comes with measurable encoder cost and frequent per-case losses, so DP remains opt-in and needs a better objective before any broader adoption.
+
+
+## 2026-10-26 — E001 schema regression hardening
+
+- Re-inspected the failed run's complete job log: 28 unit tests passed, then the benchmark CLI exited during its report-writing step with `KeyError: 'rotate_dp_size_reduction_vs_source_pct'`; the validation/logging step did not run.
+- The research branch subsequently advanced beyond the failed source SHA and now contains the DP per-row percentage fields, aggregate DP error/topology flags, and a dedicated JSON/CSV schema regression test. This makes the current code contract stronger than the code that produced the original failure.
+- Follow-up: reran the failed workflow job (attempt 2) against the original failing SHA, to determine whether the failure reproduces. The rerun is separately tracked at the same Actions run URL; no success is claimed until it reaches completion.
+- The schema test asserts each row has both DP percentage fields, aggregate values and correctness flags exist, and CSV values are emitted. The workflow also validates report files before summarizing.
+- Research status remains experimental. Existing archived synthetic run reports a small complete-payload DP advantage over greedy rotate (+0.1792% aggregate), but DP loses to greedy in 91/126 cases and its summed encoder median is 10.80% slower; this does not justify broader adoption.
