@@ -104,6 +104,42 @@ class CodecTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(restored_faces, self.faces))
                 self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
 
+    def test_chandas_adaptive_tangent_roundtrip_across_all_vertex_orderings(self):
+        bits = 16
+        levels = (1 << bits) - 1
+        diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        error_bound = diagonal / (2 * levels)
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=bits,
+                    method="chandas_adaptive_tangent", ordering=ordering
+                )
+                vertices, faces, header = decode_mesh(payload)
+                restored_vertices = np.empty_like(vertices)
+                restored_vertices[order] = vertices
+                restored_faces = order[faces]
+                errors = np.linalg.norm(restored_vertices - self.vertices, axis=1)
+                self.assertEqual(header["version"], 7)
+                self.assertEqual(
+                    header["coordinate_coder"],
+                    "chandas-adaptive-weighted-tangent-residual-varint-zlib",
+                )
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 7]))
+                self.assertTrue(np.array_equal(restored_faces, self.faces))
+                self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
+
+    def test_chandas_adaptive_block_coder_handles_sparse_and_dense_patterns(self):
+        # The all-zero block should use sparse coding; the dense alternating
+        # block should prefer direct varints. Decoder must handle both modes.
+        from middleout3d.codec import _encode_chandas_adaptive_residuals, _decode_chandas_adaptive_residuals
+        values = ([0] * 64) + ([1 if i % 2 else -1 for i in range(64)]) + ([0] * 60 + [7, 0, -9, 0])
+        encoded = _encode_chandas_adaptive_residuals(values)
+        decoded, cursor = _decode_chandas_adaptive_residuals(encoded, 0, len(values))
+        self.assertEqual(decoded, values)
+        self.assertEqual(cursor, len(encoded))
+
     def test_prithvi_rejects_unsupported_method(self):
         with self.assertRaises(CodecError):
             encode_mesh(self.vertices, self.faces, method="magic")
@@ -245,7 +281,7 @@ class CodecTests(unittest.TestCase):
         spans = self.vertices.max(axis=0) - self.vertices.min(axis=0)
         error_budget = np.linalg.norm(spans / (2 * levels))
         candidates = []
-        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent")
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent", "chandas_adaptive_tangent")
         for ordering in ("source", "bfs", "morton"):
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
@@ -280,6 +316,7 @@ class CodecTests(unittest.TestCase):
                 "weighted-tangent-parallelogram-residual-varint-zlib",
                 "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
                 "chandas-weighted-tangent-sparse-enumerative-varint-zlib",
+                "chandas-adaptive-weighted-tangent-residual-varint-zlib",
             ),
         )
         if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
