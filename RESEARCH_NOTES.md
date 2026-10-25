@@ -137,3 +137,44 @@ At 16 bits per axis over six deterministic synthetic meshes:
 - Morton: 79,687 bytes for the baseline and 69,734 bytes for Prithvi (12.4901% lower than the same-order baseline).
 
 BFS + Prithvi was the smallest of these tested configurations, but it was slower than the matched baseline in the hosted run. Morton performed poorly on this fixture set. These results are exploratory and should not be treated as general conclusions about arbitrary meshes. All 18 mesh/ordering/method combinations passed topology and quantized-coordinate equivalence checks.
+
+
+## Sanskrit combinatorics and the Chandas coding experiment (MO3D v6)
+
+### Why Piṅgala, rather than claiming a ready-made “Vedic Mathematics” formula?
+
+Jayant Shah's historical study *A History of Piṅgala's Combinatorics* says that the *Chandaḥśāstra* describes methods for listing and indexing metrical patterns and counting patterns with a fixed number of short syllables; the paper discusses the related binomial coefficients and how later interpretations of *meru-prastāra* have been debated. [University of Hyderabad PDF](https://sanskrit.uohyd.ac.in/Algorithms_in_Ancient_India/Material/Pingala.pdf).
+
+The relevant design principle is **enumerate a pattern by its rank, then recover the pattern by unranking**. That has a direct modern analogue in enumerative coding. Fraenkel's 1989 *The use and usefulness of numeration systems* explicitly discusses compression of sparse binary strings using a suitable counting system ([Information and Computation](https://doi.org/10.1016/0890-5401(89)90028-X)). MO3D uses the connection as inspiration; the implementation is a modern combinatorial coder, not an assertion that the exact source algorithm occurs in an ancient text.
+
+### Implemented hypothesis
+
+MO3D v6 \`chandas_tangent\` combines the weighted tangent-space predictor with sparse enumerative coding of its integer stream:
+
+1. The encoder predicts a vertex using a causal weighted-parallelogram stencil, expresses the residual in a local orthonormal frame, and quantizes it at the established conservative error budget.
+2. Seed vertices contribute quantized absolute coordinate symbols; predicted vertices contribute signed residual symbols.
+3. The flat symbol sequence is partitioned into blocks of 64. In each block, let the set of non-zero positions be \(S=\{s_0<\cdots<s_{k-1}\}\). The codec stores \(k\), the colexicographic combinatorial rank
+   \[
+   \operatorname{rank}(S)=\sum_{j=0}^{k-1}\binom{s_j}{j+1},
+   \]
+   and the signed non-zero values. All zero positions are implicit.
+4. The rank is stored in the minimum whole number of bytes needed for the \(\binom{n}{k}\) possible subsets, with \(n\) the block length. The stream is then compressed with zlib.
+5. The decoder un-ranks each pattern, fills omitted positions with zero, and reconstructs vertices using the same deterministic predictor.
+
+This design is useful only when the non-zero pattern plus its rank costs less than a plain varint stream after compression. zlib already captures zero runs and repeated bytes, so a pattern-specific layer may be redundant. The benchmark is designed to reject the idea if the measured size or speed is worse.
+
+### Other Sanskrit pattern inspiration
+
+Vedānta Deśika's *Pādukā Sahasram* includes a *Citra Paddhati* whose verses are described as using pictorial or structured letter arrangements. A traditional community archive describes it as poetry whose arrangement itself forms a pattern ([Citra Paddhati discussion](https://ramanuja.org/sri/BhaktiListArchives/Article?p=jan2001%2F0197.html)). This is a poetic construction, not an established mesh-compression algorithm. A possible future experiment is to detect repeated local residual blocks or traversal motifs—similar in spirit to a pattern dictionary—but it must earn its place through a real benchmark. For this iteration, Piṅgala's ranking/unranking analogy is more directly expressible as a decoder-symmetric coding rule.
+
+### Modern mesh-compression research used alongside this inspiration
+
+Vaněček, Hácha and Váša (GRAPP 2024), *A Predictor for Triangle Mesh Compression Working in Tangent Space*, combine local coordinate residuals with valence-weighted parallelogram prediction and report improved rate–distortion performance over Draco on their test set ([paper record and abstract](https://dspace.zcu.cz/items/07738464-8ce9-403f-b870-5d6fb1bc3d93)). MO3D already implements exploratory versions of this idea as v3–v5; these versions are not a reproduction of the paper's full codec and do not automatically inherit its published results.
+
+### Evaluation requirements
+
+- Compare v6 against v4 weighted tangent at identical quantization/order and compare both against Draco at a matched maximum-error target.
+- Require exact topology reconstruction and a bounded geometric error for every mesh/order/method candidate.
+- Record per-mesh bytes and encode/decode times; aggregate results must not hide regressions on small or irregular meshes.
+- Keep \`auto\` size-first selection separate from a fast single-method encode path, because evaluating many candidates adds encoding overhead.
+- Use public, representative CAD, scanned-object and robotics meshes before making claims beyond the synthetic fixtures.
