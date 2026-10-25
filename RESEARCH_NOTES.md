@@ -178,3 +178,20 @@ Vaněček, Hácha and Váša (GRAPP 2024), *A Predictor for Triangle Mesh Compre
 - Record per-mesh bytes and encode/decode times; aggregate results must not hide regressions on small or irregular meshes.
 - Keep \`auto\` size-first selection separate from a fast single-method encode path, because evaluating many candidates adds encoding overhead.
 - Use public, representative CAD, scanned-object and robotics meshes before making claims beyond the synthetic fixtures.
+
+
+## Adaptive Chandas v7: fixed enumerative coding did not win, so add a per-block fallback
+
+The first hosted v6 experiment showed that a fixed combinatorial mask is not a free win: across the 18 mesh/ordering combinations (six meshes × source/BFS/Morton), v6 used 174,559 bytes versus 172,180 bytes for weighted tangent (about 1.38% larger overall). It improved a few tiny box fixtures, but grew most larger meshes. This is a useful negative result: zlib and varints already capture many simple zero patterns, and a ranked mask costs metadata and rank bits.
+
+V7 changes the experiment rather than hiding this outcome:
+
+- Stores seed coordinates separately as unsigned quantized values.
+- Stores only predictive residuals in the block-coding stream.
+- Splits residuals into 64-symbol blocks and, for each block, compares direct signed zigzag-varints with enumerative coding of the non-zero position subset plus the non-zero magnitudes.
+- Writes a one-byte block mode and chooses the shorter pre-zlib representation; zlib still compresses the complete stream.
+- Uses a new MO3D v7 signature and retains decoders for earlier versions.
+
+The comparison is a local byte-count decision, not a promise of a smaller total file: the new seed framing, residual count, mode flags, and zlib wrapper carry overhead. The hosted v7 benchmark must tell us whether the complete stream beats v4 on the mesh families we tested.
+
+The next step is not automatically adding more Vedic analogies. It is to inspect which blocks choose enumerative mode, measure the share of residuals that are zero, compare v7 against v4 and Draco under the same error target, and then test on public, representative meshes. If the extra coding layer is not useful after overhead, we should drop it or reserve it only for meshes where it wins.
