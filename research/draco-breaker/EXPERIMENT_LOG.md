@@ -95,3 +95,5 @@ Terms must include estimated signaling/model overhead, not just raw residual ent
 - All strategies were required to pass exact oriented topology and the same position-error budget; workflow fails if any check fails. Per-case raw results and timing medians are in results/draco-breaker-rotate-dp.json and .csv.
 - Caveat: the DP objective is raw varint bytes, while the benchmark decision uses actual complete compressed MO3D payload bytes after zlib and headers. Synthetic fixtures are development data; this is not a Draco-vs-MO3D result.
 - Next: if DP improves actual bytes, validate on held-out licensed meshes and inspect encode-time overhead; otherwise keep it experimental and test better objectives.
+
+- Timing checkpoint from the archived per-case medians (sum across 126 cases, not wall-clock CI duration): greedy rotate encode medians summed to 16,189.86 ms vs 17,938.74 ms for DP (+10.80%); decode medians summed to 13,092.17 ms vs 13,122.58 ms (+0.23%). This confirms the small 0.1792% byte gain comes with measurable encoder cost and frequent per-case losses, so DP remains opt-in and needs a better objective before any broader adoption.
