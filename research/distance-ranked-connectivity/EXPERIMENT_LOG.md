@@ -25,3 +25,13 @@ This is not a reimplementation of Marais, Gain and Shreiner (2007), nor Dvořák
 - Google Draco bitstream specification: https://google.github.io/draco/spec/ — describes connectivity and geometry coding modes.
 
 The codec uses an idea from modern published research. No claim is made that distance-ranked mesh coding occurs in Piṅgala's Chandaḥśāstra, the Śulbasūtras or Vedānta Deśika's Citra Paddhati.
+
+
+## E001 — complete-payload distance-rank benchmark
+
+- GitHub Actions run: https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40228020133
+- Source commit tested: 0b0e0be07603e150c9720691d4fc02c7bea8201a.
+- Configuration: six deterministic synthetic fixtures, 16-bit positions, source/BFS/Morton vertex orderings, and three encode/decode timing repetitions.
+- Paired summary: paired_cases=18; baseline_total_bytes=193365; distance_ranked_total_bytes=129708; size_reduction_pct=32.9206; wins=13; ties=0; losses=5; mean_baseline_connectivity_bytes=3811.7222; mean_ranked_connectivity_bytes=82.2778; all_topology_exact=True; all_error_budgets_met=True.
+- Unsupported mesh/order cases: none.
+- The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics per paired case. A positive result is limited to this synthetic corpus and does not imply Draco superiority.
