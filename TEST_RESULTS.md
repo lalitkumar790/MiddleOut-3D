@@ -56,3 +56,11 @@ These tests validate correctness under the tested conditions; they do not establ
 - It was removed from the auto-selection search but remains an experimental ordering. This preserves the negative result rather than letting an unproductive heuristic slow normal encoding.
 - Latest functional test matrix before the report-only commits passed across Python 3.10, 3.12, and 3.13, including remapping/round-trip tests for predictive ordering and auto selection.
 
+
+
+## Face-stream order validation
+
+- The face-stream benchmark [completed successfully](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40196914983). Archived tables are in [JSON](results/face_connectivity_study_2026-10-25.json) and [CSV](results/face_connectivity_study_2026-10-25.csv).
+- Six synthetic meshes were tested with seven coordinate coders, three vertex orderings, and source/rotate/BFS face strategies. All topology and error-budget checks passed.
+- Rotate-only was smaller in aggregate within every fixed coder/vertex-order pair; BFS face traversal was larger in all 21 pairs.
+- The unit-test matrix passed on Python 3.10, 3.12, and 3.13 in [run 40196963608](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40196963608). It covers triangle winding, face-stream round trips, geometry-error bounds, and auto selection of the shortest complete bitstream.
