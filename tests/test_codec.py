@@ -188,27 +188,38 @@ class CodecTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(restored_faces, self.faces))
                 self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
 
-    def test_auto_mode_selects_smallest_of_all_coder_ordering_candidates(self):
+    def test_auto_mode_selects_smallest_valid_error_budget_candidate(self):
         bits = 16
-        candidates = [
-            encode_mesh(self.vertices, self.faces, bits=bits, method=method, ordering=ordering)
-            for ordering in ("source", "bfs", "morton")
-            for method in ("baseline", "prithvi", "tangent", "weighted_tangent")
-        ] + [
-            encode_mesh(
-                self.vertices, self.faces, bits=bits, method="normal_fine_tangent",
-                ordering=ordering, normal_step_ratio=ratio
-            )
-            for ordering in ("source", "bfs", "morton")
-            for ratio in (0.375, 0.5, 0.625, 0.75, 0.875)
-        ]
+        levels = (1 << bits) - 1
+        spans = self.vertices.max(axis=0) - self.vertices.min(axis=0)
+        error_budget = np.linalg.norm(spans / (2 * levels))
+        candidates = []
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent")
+        for ordering in ("source", "bfs", "morton"):
+            order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+            ordered_vertices = self.vertices[order]
+            for method in methods:
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=bits, method=method, ordering=ordering
+                )
+                decoded, _, _ = decode_mesh(payload)
+                if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
+                    candidates.append(payload)
+            for ratio in (0.375, 0.5, 0.625, 0.75, 0.875):
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=bits, method="normal_fine_tangent",
+                    ordering=ordering, normal_step_ratio=ratio
+                )
+                decoded, _, _ = decode_mesh(payload)
+                if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
+                    candidates.append(payload)
+
         automatic = encode_mesh(self.vertices, self.faces, bits=bits, method="auto")
         vertices, faces, header = decode_mesh(automatic)
+        self.assertTrue(candidates)
         self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
-        self.assertTrue(np.array_equal(faces.shape, np.asarray(self.faces.shape)))
+        self.assertEqual(faces.shape, self.faces.shape)
         self.assertIn(header["vertex_ordering"], ("source", "bfs", "morton"))
-        if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
-            self.assertIn(header["normal_step_ratio"], (0.375, 0.5, 0.625, 0.75, 0.875))
         self.assertIn(
             header["coordinate_coder"],
             (
@@ -219,6 +230,8 @@ class CodecTests(unittest.TestCase):
                 "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
             ),
         )
+        if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
+            self.assertIn(header["normal_step_ratio"], (0.375, 0.5, 0.625, 0.75, 0.875))
         self.assertEqual(len(vertices), len(self.vertices))
 
     def test_auto_mode_falls_back_when_predictive_methods_are_not_applicable(self):
