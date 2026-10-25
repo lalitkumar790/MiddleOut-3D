@@ -111,7 +111,7 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 ## GitHub Actions
 
 - **Tests** run on pushes, pull requests, and manual dispatch across Python 3.10, 3.12, and 3.13. The workflow runs unit tests and CLI encode/decode smoke tests.
-- **Benchmark sample meshes** is manually triggered from the Actions tab. It accepts position-bit and repeat-count inputs and uploads JSON/CSV results as an artifact.
+- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline vs Prithvi, prints per-mesh results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
 
 ## Research roadmap
 
