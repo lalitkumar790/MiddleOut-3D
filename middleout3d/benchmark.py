@@ -100,6 +100,8 @@ def _benchmark_coder(
         "topology_exact": bool(np.array_equal(restored_faces, faces)),
         "format_version": metadata["version"],
         "header_ordering": metadata.get("vertex_ordering", "source"),
+        "predictive_vertices": int(metadata.get("tangent_predictive_vertices") or 0),
+        "tangent_residual_step": metadata.get("tangent_residual_step"),
     }
     return metrics, decoded_vertices, decoded_faces
 
@@ -122,24 +124,41 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         prithvi_metrics, prithvi_decoded_vertices, _ = _benchmark_coder(
             vertices, faces, bits, repeats, "prithvi", ordering
         )
+        tangent_metrics, _, _ = _benchmark_coder(
+            vertices, faces, bits, repeats, "tangent", ordering
+        )
         positions_equal = bool(np.array_equal(baseline_decoded_vertices, prithvi_decoded_vertices))
         result = {
             "ordering": ordering,
             "baseline_bytes": baseline_metrics["bytes"],
             "prithvi_bytes": prithvi_metrics["bytes"],
+            "tangent_bytes": tangent_metrics["bytes"],
             "prithvi_size_reduction_vs_baseline_pct": round(
                 (1 - prithvi_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
             ) if baseline_metrics["bytes"] else None,
+            "tangent_size_reduction_vs_baseline_pct": round(
+                (1 - tangent_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
+            "tangent_size_reduction_vs_prithvi_pct": round(
+                (1 - tangent_metrics["bytes"] / prithvi_metrics["bytes"]) * 100, 4
+            ) if prithvi_metrics["bytes"] else None,
             "baseline_encode_median_ms": baseline_metrics["encode_median_ms"],
             "baseline_decode_median_ms": baseline_metrics["decode_median_ms"],
             "prithvi_encode_median_ms": prithvi_metrics["encode_median_ms"],
             "prithvi_decode_median_ms": prithvi_metrics["decode_median_ms"],
+            "tangent_encode_median_ms": tangent_metrics["encode_median_ms"],
+            "tangent_decode_median_ms": tangent_metrics["decode_median_ms"],
             "baseline_max_vertex_error": baseline_metrics["max_vertex_error"],
             "prithvi_max_vertex_error": prithvi_metrics["max_vertex_error"],
+            "tangent_max_vertex_error": tangent_metrics["max_vertex_error"],
             "baseline_rmse_vertex_distance": baseline_metrics["rmse_vertex_distance"],
             "prithvi_rmse_vertex_distance": prithvi_metrics["rmse_vertex_distance"],
+            "tangent_rmse_vertex_distance": tangent_metrics["rmse_vertex_distance"],
             "baseline_topology_exact": baseline_metrics["topology_exact"],
             "prithvi_topology_exact": prithvi_metrics["topology_exact"],
+            "tangent_topology_exact": tangent_metrics["topology_exact"],
+            "tangent_predictive_vertices": tangent_metrics["predictive_vertices"],
+            "tangent_residual_step": tangent_metrics["tangent_residual_step"],
             "quantized_positions_equal": positions_equal,
         }
         ordering_results.append(result)
@@ -230,9 +249,9 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
         "report_version": 2,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
-        "configuration": {"position_bits": bits, "repeats": repeats, "methods": ["baseline", "prithvi"], "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
+        "configuration": {"position_bits": bits, "repeats": repeats, "methods": ["baseline", "prithvi", "tangent"], "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
         "results": rows, "errors": errors,
-        "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements.",
+        "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements. The tangent method is compared with the other methods at the same conservative geometric error bound, and its actual error is reported separately.",
     }
     output_json = Path(output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
