@@ -8,6 +8,7 @@ on:
       - "tests/**"
       - ".github/workflows/benchmark.yml"
       - "requirements.txt"
+      - "requirements-benchmark.txt"
       - "pyproject.toml"
   workflow_dispatch:
     inputs:
@@ -34,9 +35,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements-benchmark.txt
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-benchmark.txt
       - name: Generate deterministic benchmark meshes
         run: python -m middleout3d generate-fixtures --out samples
       - name: Run baseline, Prithvi, tangent, weighted tangent, and adaptive comparison across orderings
@@ -47,15 +48,13 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | order | baseline B | Prithvi B | tangent B | weighted tangent B | baseline savings % | Prithvi savings % | tangent savings % | weighted savings % | adaptive best")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | Draco B | Draco savings % | Draco max error | adaptive best")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
                       f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
-                      f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | '
-                      f'0.0 | {result["prithvi_size_reduction_vs_baseline_pct"]}% | '
-                      f'{result["tangent_size_reduction_vs_baseline_pct"]}% | '
-                      f'{result["weighted_tangent_size_reduction_vs_baseline_pct"]}% | '
+                      f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | {result["draco_bytes"]} | '
+                      f'{result["draco_size_reduction_vs_baseline_pct"]}% | {result["draco_max_vertex_error"]} | '
                       f'{row["best_candidate_method"]}/{row["best_candidate_ordering"]}/{row["best_candidate_bytes"]} B'
                   )
           if report["errors"]:
@@ -71,6 +70,8 @@ jobs:
                           raise SystemExit(f'Topology reconstruction failed: {row["name"]}/{result["ordering"]}/{method}')
                       if metrics["max_vertex_error"] > row["max_error_bound_estimate"] * 1.0001 + 1e-12:
                           raise SystemExit(f'Geometry error bound exceeded: {row["name"]}/{result["ordering"]}/{method}')
+                  if not result["draco_topology_equivalent"]:
+                      raise SystemExit(f'Draco topology reconstruction failed: {row["name"]}/{result["ordering"]}')
 
           PY
       - name: Upload benchmark report
