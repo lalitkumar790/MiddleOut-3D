@@ -730,23 +730,64 @@ def _decode_face_stream(face_raw: bytes, vertex_count: int, face_count: int) -> 
 
 
 
-def _distance_ranked_candidates(
+def _distance_ranked_candidate_distances(
     vertices: np.ndarray, u: int, v: int, prediction: np.ndarray
-) -> np.ndarray:
-    """Order all vertices except an edge's endpoints by squared distance.
-
-    Distances use the reconstructed, quantized vertex positions shared by the
-    encoder and decoder. Vertex ID is a deterministic secondary key for ties.
-    This prototype intentionally uses a simple all-vertex candidate set; it is
-    an adaptation inspired by distance-ranked connectivity, not its exact
-    published traversal/candidate rules.
-    """
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return candidate IDs in ascending-ID order and their squared distances."""
     candidate_ids = np.arange(len(vertices), dtype=np.int64)
     candidate_ids = candidate_ids[(candidate_ids != u) & (candidate_ids != v)]
     offsets = vertices[candidate_ids] - prediction
     squared_distance = np.einsum("ij,ij->i", offsets, offsets)
-    order = np.lexsort((candidate_ids, squared_distance))
-    return candidate_ids[order]
+    return candidate_ids, squared_distance
+
+
+def _distance_ranked_candidate_rank(
+    vertices: np.ndarray,
+    u: int,
+    v: int,
+    prediction: np.ndarray,
+    target_id: int,
+) -> int:
+    """Compute exact distance rank in O(V) with vertex ID as stable tie-break."""
+    candidate_ids, squared_distance = _distance_ranked_candidate_distances(
+        vertices, u, v, prediction
+    )
+    target_position = int(np.searchsorted(candidate_ids, target_id))
+    if target_position >= len(candidate_ids) or int(candidate_ids[target_position]) != target_id:
+        raise CodecError("ranked connectivity target is not in the candidate set")
+    target_distance = squared_distance[target_position]
+    less = int(np.count_nonzero(squared_distance < target_distance))
+    tied_before = int(np.count_nonzero(
+        (squared_distance == target_distance) & (candidate_ids < target_id)
+    ))
+    return less + tied_before
+
+
+def _distance_ranked_candidate_at_rank(
+    vertices: np.ndarray,
+    u: int,
+    v: int,
+    prediction: np.ndarray,
+    rank: int,
+) -> int:
+    """Select exact distance rank in expected O(V) without sorting all candidates.
+
+    The kth distance is selected by partition; ties at that distance are then
+    resolved by ascending vertex ID. Candidate IDs and their tie subset are
+    already in ascending ID order, making this identical to lexicographic sort.
+    """
+    candidate_ids, squared_distance = _distance_ranked_candidate_distances(
+        vertices, u, v, prediction
+    )
+    if rank < 0 or rank >= len(candidate_ids):
+        raise CodecError("distance rank is outside the candidate set")
+    threshold = float(np.partition(squared_distance, rank)[rank])
+    less_count = int(np.count_nonzero(squared_distance < threshold))
+    tied_ids = candidate_ids[squared_distance == threshold]
+    tied_offset = rank - less_count
+    if tied_offset < 0 or tied_offset >= len(tied_ids):
+        raise CodecError("could not resolve distance-rank tie")
+    return int(tied_ids[tied_offset])
 
 
 def _distance_ranked_edge_incidence(
@@ -863,11 +904,10 @@ def _encode_distance_ranked_connectivity(
             if neighbor_u != v or neighbor_v != u:
                 raise CodecError("inconsistent adjacent-face orientation")
             prediction = vertices[u] + vertices[v] - vertices[opposite]
-            candidates = _distance_ranked_candidates(vertices, u, v, prediction)
-            matches = np.flatnonzero(candidates == target)
-            if not len(matches):
-                raise CodecError("could not rank the adjacent triangle's closing vertex")
-            out.extend(_encode_varint(int(matches[0]) + 1))
+            rank = _distance_ranked_candidate_rank(
+                vertices, u, v, prediction, target
+            )
+            out.extend(_encode_varint(rank + 1))
             emitted_faces.add(neighbor_face)
             add_face((v, u, target), neighbor_face)
             added_face = True
@@ -922,10 +962,9 @@ def _decode_distance_ranked_connectivity(
                 continue
             rank = code - 1
             prediction = vertices[u] + vertices[v] - vertices[opposite]
-            candidates = _distance_ranked_candidates(vertices, u, v, prediction)
-            if rank >= len(candidates):
-                raise CodecError("distance rank is outside the candidate set")
-            target = int(candidates[rank])
+            target = _distance_ranked_candidate_at_rank(
+                vertices, u, v, prediction, rank
+            )
             triangle = (v, u, target)
             face_key = tuple(sorted(triangle))
             if face_key in seen_faces:

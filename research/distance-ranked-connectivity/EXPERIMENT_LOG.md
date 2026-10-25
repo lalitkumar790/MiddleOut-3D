@@ -35,3 +35,13 @@ The codec uses an idea from modern published research. No claim is made that dis
 - Paired summary: paired_cases=18; baseline_total_bytes=193365; distance_ranked_total_bytes=129708; size_reduction_pct=32.9206; wins=13; ties=0; losses=5; mean_baseline_connectivity_bytes=3811.7222; mean_ranked_connectivity_bytes=82.2778; all_topology_exact=True; all_error_budgets_met=True.
 - Unsupported mesh/order cases: none.
 - The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics per paired case. A positive result is limited to this synthetic corpus and does not imply Draco superiority.
+
+
+## E002 — exact linear-time distance rank and selection
+
+E001 shows a promising 32.9206% aggregate size reduction on the six synthetic fixtures, but the implementation sorted nearly all vertex candidates for every gate, reaching roughly 1.2 seconds per encode/decode on the synthetic icosphere and about 2 seconds on the wavy grid. E002 replaces full sorting with exact rank counting and order-statistic selection:
+
+- Encoder rank = count of candidates with smaller squared distance + count at the same distance with smaller vertex ID.
+- Decoder finds the kth distance with partition selection, counts all candidates below it, then resolves equal-distance candidates in ascending vertex-ID order.
+- Both procedures are expected O(V) per gate instead of O(V log V); encoder and decoder use the same distance computation and exact equality relation for tie handling.
+- New deterministic tests compare every selected rank against the previous full lexicographic sort, including duplicate positions and equidistant candidates. Full payload benchmarks will determine the actual speed benefit; no speedup is presumed until run E002 completes.

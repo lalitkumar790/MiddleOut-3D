@@ -7,6 +7,7 @@ import trimesh
 from middleout3d.codec import (
     AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_CODING_OPTIONS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
     _encode_chandas_sparse_signed, _decode_chandas_sparse_signed, _encode_varint, _zigzag_encode, _reorder_faces_for_stream,
+    _distance_ranked_candidate_rank, _distance_ranked_candidate_at_rank,
 )
 
 
@@ -274,6 +275,41 @@ class CodecTests(unittest.TestCase):
                 self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 4]))
                 self.assertTrue(np.array_equal(restored_faces, self.faces))
                 self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
+
+    def test_distance_rank_selection_matches_full_sort_including_ties(self):
+        rng = np.random.default_rng(1907)
+        # Repeated positions deliberately create equal-distance ties; the vertex
+        # ID must remain the stable secondary key in the optimized implementation.
+        vertices = rng.integers(-3, 4, size=(41, 3)).astype(np.float64)
+        vertices[7] = vertices[9]
+        vertices[22] = vertices[9]
+        cases = [
+            (0, 1, np.asarray([0.0, 0.0, 0.0])),
+            (4, 17, np.asarray([1.0, -1.0, 0.5])),
+            (22, 39, np.asarray([-2.0, 2.0, 0.0])),
+        ]
+        for u, v, prediction in cases:
+            candidates = np.arange(len(vertices), dtype=np.int64)
+            candidates = candidates[(candidates != u) & (candidates != v)]
+            squared = np.einsum(
+                "ij,ij->i", vertices[candidates] - prediction,
+                vertices[candidates] - prediction,
+            )
+            expected = candidates[np.lexsort((candidates, squared))]
+            for rank, target in enumerate(expected):
+                with self.subTest(u=u, v=v, rank=rank):
+                    self.assertEqual(
+                        _distance_ranked_candidate_at_rank(
+                            vertices, u, v, prediction, rank
+                        ),
+                        int(target),
+                    )
+                    self.assertEqual(
+                        _distance_ranked_candidate_rank(
+                            vertices, u, v, prediction, int(target)
+                        ),
+                        rank,
+                    )
 
     def test_distance_ranked_connectivity_roundtrip_preserves_oriented_topology(self):
         # A closed triangulated surface and an open two-triangle patch exercise
