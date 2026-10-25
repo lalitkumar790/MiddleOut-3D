@@ -1,0 +1,43 @@
+name: Benchmark sample meshes
+
+on:
+  workflow_dispatch:
+    inputs:
+      bits:
+        description: Position quantization bits (8-24)
+        required: true
+        default: "16"
+      repeats:
+        description: Repetitions per measurement
+        required: true
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Generate deterministic benchmark meshes
+        run: python -m middleout3d generate-fixtures --out samples
+      - name: Run benchmark
+        run: |
+          python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ inputs.bits }}" --repeats "${{ inputs.repeats }}"
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: middleout3d-benchmark-${{ inputs.bits }}bits
+          path: |
+            results/ci-benchmark.json
+            results/ci-benchmark.csv
