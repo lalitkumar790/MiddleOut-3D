@@ -1,7 +1,8 @@
 """Experimental quantized triangle-mesh codec for MiddleOut-3D.
 
 MO3D v1 stores baseline absolute quantized XYZ values; MO3D v2 adds a
-Prithvi mesh-adjacency residual coder. "Prithvi" is a design analogy inspired
+Prithvi mesh-adjacency residual coder; MO3D v3 experiments with a
+parallelogram predictor and local tangent-space residuals. "Prithvi" is a design analogy inspired
 by Atharvaveda 12.1 (Prithvi Sukta), not a claim that the scripture describes
 a compression method.
 
@@ -19,10 +20,11 @@ import numpy as np
 
 MAGIC_V1 = b"MO3D\x01"
 MAGIC_V2 = b"MO3D\x02"
+MAGIC_V3 = b"MO3D\x03"
 MAGIC = MAGIC_V1  # backward-compatible name for the original v1 signature
 MAX_HEADER_BYTES = 1_000_000
 MAX_ITEMS = 100_000_000
-METHODS = ("baseline", "prithvi")
+METHODS = ("baseline", "prithvi", "tangent")
 
 
 class CodecError(ValueError):
@@ -240,6 +242,140 @@ def _decode_prithvi_coordinates(coord_raw: bytes, faces: np.ndarray, vertex_coun
     return quantized
 
 
+def _parallelogram_stencils(faces: np.ndarray, vertex_count: int) -> list[tuple[int, int, int] | None]:
+    """Find a deterministic prior base triangle sharing an edge with each vertex.
+
+    A stencil (left, right, base) predicts the opposite vertex as
+    left + right - base. All stencil vertices have lower indices than target.
+    """
+    edge_opposites: dict[tuple[int, int], list[int]] = {}
+    for tri in faces:
+        a, b, c = (int(x) for x in tri)
+        if len({a, b, c}) != 3:
+            continue
+        for u, v, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            edge = (u, v) if u < v else (v, u)
+            edge_opposites.setdefault(edge, []).append(opposite)
+
+    candidates: list[list[tuple[int, int, int]]] = [[] for _ in range(vertex_count)]
+    for (left, right), opposites in edge_opposites.items():
+        unique = sorted(set(opposites))
+        for target in unique:
+            if target <= max(left, right):
+                continue
+            for base in unique:
+                if base != target and left < target and right < target and base < target:
+                    candidates[target].append((left, right, base))
+    return [min(options) if options else None for options in candidates]
+
+
+def _local_tangent_frame(left: np.ndarray, right: np.ndarray, base: np.ndarray,
+                         prediction: np.ndarray) -> np.ndarray:
+    """Orthonormal frame with the base triangle normal as its first axis."""
+    edge = left - right
+    normal = np.cross(edge, base - right)
+    eps = 1e-14
+    normal_norm = float(np.linalg.norm(normal))
+    if normal_norm <= eps:
+        edge_norm = float(np.linalg.norm(edge))
+        if edge_norm > eps:
+            direction = edge / edge_norm
+            axis = np.eye(3)[int(np.argmin(np.abs(direction)))]
+            normal = np.cross(direction, axis)
+        else:
+            normal = np.array([0.0, 0.0, 1.0])
+        normal_norm = float(np.linalg.norm(normal))
+    x1 = normal / max(normal_norm, eps)
+
+    direction = prediction - base
+    direction -= float(np.dot(direction, x1)) * x1
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= eps:
+        direction = edge - float(np.dot(edge, x1)) * x1
+        direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= eps:
+        axis = np.eye(3)[int(np.argmin(np.abs(x1)))]
+        direction = axis - float(np.dot(axis, x1)) * x1
+        direction_norm = float(np.linalg.norm(direction))
+    x2 = direction / max(direction_norm, eps)
+    x3 = np.cross(x1, x2)
+    x3 /= max(float(np.linalg.norm(x3)), eps)
+    x2 = np.cross(x3, x1)
+    x2 /= max(float(np.linalg.norm(x2)), eps)
+    return np.column_stack((x1, x2, x3))
+
+
+def _tangent_residual_step(mins: np.ndarray, maxs: np.ndarray, bits: int) -> float:
+    spans = np.asarray(maxs - mins, dtype=np.float64)
+    positive = spans[spans > 0.0]
+    if positive.size == 0:
+        raise CodecError("mesh must have non-zero geometric extent")
+    step = float(positive.min() / ((1 << bits) - 1))
+    if not np.isfinite(step) or step <= 0.0:
+        raise CodecError("could not derive a finite tangent residual quantization step")
+    return step
+
+
+def _encode_tangent_coordinates(
+    vertices: np.ndarray, quantized: np.ndarray, mins: np.ndarray, maxs: np.ndarray,
+    faces: np.ndarray, bits: int, level: int
+) -> tuple[bytes, float, int]:
+    """Encode locally framed parallelogram-prediction residuals as signed varints."""
+    levels = (1 << bits) - 1
+    spans = maxs - mins
+    step = _tangent_residual_step(mins, maxs, bits)
+    stencils = _parallelogram_stencils(faces, len(vertices))
+    reconstructed = np.empty_like(vertices, dtype=np.float64)
+    raw = bytearray()
+    predicted_count = 0
+    for i, stencil in enumerate(stencils):
+        if stencil is None:
+            q = quantized[i]
+            reconstructed[i] = mins + (q.astype(np.float64) / levels) * spans
+            for value in q:
+                raw.extend(_encode_varint(int(value)))
+            continue
+        left_i, right_i, base_i = stencil
+        left, right, base = reconstructed[left_i], reconstructed[right_i], reconstructed[base_i]
+        prediction = left + right - base
+        frame = _local_tangent_frame(left, right, base, prediction)
+        local_residual = frame.T @ (vertices[i] - prediction)
+        residual_codes = np.rint(local_residual / step).astype(np.int64)
+        for value in residual_codes:
+            raw.extend(_encode_varint(_zigzag_encode(int(value))))
+        reconstructed[i] = prediction + frame @ (residual_codes.astype(np.float64) * step)
+        predicted_count += 1
+    return zlib.compress(bytes(raw), level), step, predicted_count
+
+
+def _decode_tangent_coordinates(
+    coord_raw: bytes, faces: np.ndarray, vertex_count: int, bits: int,
+    mins: np.ndarray, maxs: np.ndarray, step: float
+) -> np.ndarray:
+    raw_values = _decode_varints(coord_raw, vertex_count * 3)
+    levels = (1 << bits) - 1
+    spans = maxs - mins
+    stencils = _parallelogram_stencils(faces, vertex_count)
+    reconstructed = np.empty((vertex_count, 3), dtype=np.float64)
+    cursor = 0
+    for i, stencil in enumerate(stencils):
+        values = raw_values[cursor:cursor + 3]
+        cursor += 3
+        if stencil is None:
+            q = np.asarray(values, dtype=np.int64)
+            if np.any(q < 0) or np.any(q > levels):
+                raise CodecError("absolute seed coordinate is outside quantization range")
+            reconstructed[i] = mins + (q.astype(np.float64) / levels) * spans
+            continue
+        left_i, right_i, base_i = stencil
+        left, right, base = reconstructed[left_i], reconstructed[right_i], reconstructed[base_i]
+        prediction = left + right - base
+        frame = _local_tangent_frame(left, right, base, prediction)
+        residual_codes = np.asarray([_zigzag_decode(int(v)) for v in values], dtype=np.float64)
+        reconstructed[i] = prediction + frame @ (residual_codes * step)
+    return reconstructed
+
+
 def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source") -> bytes:
     """Encode a triangle mesh as MO3D bytes.
 
@@ -265,9 +401,16 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError(f"method must be one of: {', '.join(METHODS)}")
     vertices, faces, _ = reorder_mesh(vertices, faces, ordering)
     quantized, mins, maxs = _quantize(vertices, bits)
+    tangent_step = None
+    tangent_predictive_vertices = 0
     if method == "prithvi":
         coord_stream = _encode_prithvi_coordinates(quantized, faces, level)
         coordinate_coder = "prithvi-mesh-adjacency-residual-varint-zlib"
+    elif method == "tangent":
+        coord_stream, tangent_step, tangent_predictive_vertices = _encode_tangent_coordinates(
+            vertices, quantized, mins, maxs, faces, bits, level
+        )
+        coordinate_coder = "tangent-parallelogram-residual-varint-zlib"
     else:
         coord_dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         coord_stream = zlib.compress(quantized.astype(coord_dtype).tobytes(order="C"), level)
@@ -276,7 +419,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
 
     header = {
         "format": "MO3D",
-        "version": 2 if method == "prithvi" else 1,
+        "version": {"baseline": 1, "prithvi": 2, "tangent": 3}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
         "vertex_count": int(len(vertices)),
@@ -285,13 +428,15 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "bounds_max": maxs.tolist(),
         "coordinate_stream_bytes": len(coord_stream),
         "face_stream_bytes": len(face_stream),
+        "tangent_residual_step": tangent_step,
+        "tangent_predictive_vertices": tangent_predictive_vertices,
         "coordinate_coder": coordinate_coder,
         "position_quantization": "uniform per axis, bounding-box normalized",
         "topology": "triangles, delta indices with zigzag varints, zlib",
         "method_note": "Prithvi is an engineering analogy inspired by Atharvaveda 12.1, not a claim of a compression algorithm in the text." if method == "prithvi" else "Baseline absolute-coordinate coder.",
     }
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    magic = MAGIC_V2 if method == "prithvi" else MAGIC_V1
+    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3}[method]
     return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
 
 
@@ -304,7 +449,7 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if len(payload) < magic_len + 4:
         raise CodecError("not a supported MO3D bitstream")
     magic = payload[:magic_len]
-    if magic not in (MAGIC_V1, MAGIC_V2):
+    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3):
         raise CodecError("not a supported MO3D bitstream")
     header_len = struct.unpack(">I", payload[magic_len:magic_len + 4])[0]
     start = magic_len + 4
@@ -314,10 +459,10 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         header = json.loads(payload[start:start + header_len].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CodecError("invalid metadata header") from exc
-    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2):
+    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3):
         raise CodecError("unsupported MO3D format version")
     version = header["version"]
-    expected_version = 1 if magic == MAGIC_V1 else 2
+    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3}[magic]
     if version != expected_version:
         raise CodecError("MO3D magic and header version do not match")
     bits = header.get("position_bits")
@@ -356,9 +501,11 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
 
     coder = header.get("coordinate_coder", "absolute-fixed-width-zlib")
     if version == 1 and coder != "absolute-fixed-width-zlib":
-        raise CodecError("non-baseline coordinate coding requires MO3D format version 2")
+        raise CodecError("non-baseline coordinate coding requires MO3D format version 2 or higher")
     if version == 2 and coder != "prithvi-mesh-adjacency-residual-varint-zlib":
         raise CodecError("MO3D format version 2 requires the Prithvi residual coordinate coder")
+    if version == 3 and coder != "tangent-parallelogram-residual-varint-zlib":
+        raise CodecError("MO3D format version 3 requires the tangent-space residual coder")
     if coder == "absolute-fixed-width-zlib":
         dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         expected_coord_bytes = vertex_count * 3 * dtype.itemsize
@@ -369,9 +516,14 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
             raise CodecError("absolute coordinate is outside quantization range")
     elif coder == "prithvi-mesh-adjacency-residual-varint-zlib":
         quantized = _decode_prithvi_coordinates(coord_raw, faces, vertex_count, bits)
+        vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
+    elif coder == "tangent-parallelogram-residual-varint-zlib":
+        step = header.get("tangent_residual_step")
+        if not isinstance(step, (int, float)) or not np.isfinite(step) or step <= 0:
+            raise CodecError("invalid tangent residual quantization step")
+        vertices = _decode_tangent_coordinates(coord_raw, faces, vertex_count, bits, mins, maxs, float(step))
     else:
         raise CodecError(f"unsupported coordinate coder: {coder!r}")
-    vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
     return vertices, faces, header
 
 
