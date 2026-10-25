@@ -311,7 +311,10 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
 FACE_ORDERINGS = ("source", "bfs")
-AUTO_FACE_ORDERINGS = ("source", "bfs")
+# BFS face traversal was larger in the first complete-stream experiment, so
+# the size-first auto search retains only source face order until a better
+# connectivity coder earns inclusion.
+AUTO_FACE_ORDERINGS = ("source",)
 # Predictive cost-guided traversal remains available experimentally, but the first
 # benchmark found it consistently larger and much slower than source/BFS. Keep
 # the user-facing rate-first auto search on the three proven orderings until a
