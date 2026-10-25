@@ -79,6 +79,30 @@ jobs:
                       raise SystemExit(f'Draco could not meet the max-error budget in its tested quantization range: {row["name"]}/{result["ordering"]}')
 
           PY
+      - name: Compare source vs BFS face connectivity order
+        run: |
+          python -m middleout3d benchmark-connectivity samples --out results/ci-connectivity-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '1' }}"
+      - name: Validate face-connectivity results and print aggregate
+        run: |
+          python - <<'PY'
+          import json
+          report = json.load(open("results/ci-connectivity-benchmark.json", encoding="utf-8"))
+          print("vertex order | method | source face order B | BFS face order B | size reduction %")
+          for row in report["aggregate"]:
+              print(
+                  f'{row["vertex_ordering"]} | {row["method"]} | '
+                  f'{row["source_total_bytes"]} | {row["bfs_total_bytes"]} | '
+                  f'{row["bfs_size_reduction_vs_source_pct"]}%'
+              )
+              if not (
+                  row["source_error_checks_passed"] and row["bfs_error_checks_passed"]
+                  and row["source_topology_checks_passed"] and row["bfs_topology_checks_passed"]
+              ):
+                  raise SystemExit(f'Face-order round-trip checks failed: {row["vertex_ordering"]}/{row["method"]}')
+          if report["errors"]:
+              print("CONNECTIVITY BENCHMARK ERRORS:", report["errors"])
+              raise SystemExit(1)
+          PY
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:
@@ -86,3 +110,5 @@ jobs:
           path: |
             results/ci-benchmark.json
             results/ci-benchmark.csv
+            results/ci-connectivity-benchmark.json
+            results/ci-connectivity-benchmark.csv
