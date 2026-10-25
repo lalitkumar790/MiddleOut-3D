@@ -5,7 +5,7 @@ import numpy as np
 import trimesh
 
 from middleout3d.codec import (
-    CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
+    AUTO_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
     _encode_chandas_sparse_signed, _decode_chandas_sparse_signed,
 )
 
@@ -282,7 +282,7 @@ class CodecTests(unittest.TestCase):
         error_budget = np.linalg.norm(spans / (2 * levels))
         candidates = []
         methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent", "chandas_adaptive_tangent")
-        for ordering in ("source", "bfs", "morton", "predictive"):
+        for ordering in AUTO_ORDERINGS:
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
             for method in methods:
@@ -306,7 +306,7 @@ class CodecTests(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
         self.assertEqual(faces.shape, self.faces.shape)
-        self.assertIn(header["vertex_ordering"], ("source", "bfs", "morton", "predictive"))
+        self.assertIn(header["vertex_ordering"], AUTO_ORDERINGS)
         self.assertIn(
             header["coordinate_coder"],
             (
