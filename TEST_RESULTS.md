@@ -1,47 +1,35 @@
-# Local validation report
+# Test and validation report
 
-Date: 2026-10-25 (runtime date). Environment: Python 3.13.5, Linux x86_64, NumPy 2.3.5, Trimesh available in the test environment.
+**Updated:** 25 October 2026
 
-## Test suite
+## Automated CI validation
 
-Command:
+- **Unit tests:** 9 tests passed on Python 3.10, 3.12, and 3.13 in the [GitHub Actions test run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40148648166).
+- **CLI smoke test:** the workflow generates sample meshes, encodes an OBJ file, and decodes the result.
+- **Prithvi benchmark:** successful [baseline-vs-Prithvi benchmark run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40148648174) on Python 3.12, with six synthetic fixtures and five timed repetitions per operation.
 
-```bash
-python -m unittest discover -s tests -v
-```
+## What the tests cover
 
-Result from the local prototype validation: **5 tests passed**.
+- Baseline encode/decode preserves triangle indices and stays within the quantization error bound.
+- Higher coordinate precision does not worsen the tested reconstruction error.
+- Prithvi reconstructed quantized vertex coordinates exactly match the absolute-coordinate baseline at the same precision.
+- Both methods preserve triangle-index connectivity exactly on round-trip.
+- Unsupported methods and bit depths are rejected.
+- Corrupt bitstreams and mismatched format signatures/headers are rejected.
+- A legacy MO3D v1 header without the newer optional coder metadata remains decodable.
 
-## Precision/topology sweep
+## First Prithvi benchmark
 
-The local validation loop tested all six generated OBJ fixtures at 8, 12, 16, 20, and 24 position bits (30 fixture/precision combinations).
+At 16 bits per axis, the sum of encoded sizes across six deterministic synthetic fixtures was 61,794 bytes for the v1 absolute-coordinate baseline and 47,274 bytes for the v2 Prithvi method, an aggregate reduction of 23.4974%. Prithvi produced a smaller file on four fixtures and a larger file on two. Its encode/decode wall-clock medians were slower than the baseline for every fixture in the hosted Python run.
 
-- All 30 round trips decoded.
-- Triangle face connectivity was exact in all 30 cases.
-- Reconstructed coordinate errors stayed within the codec's per-axis quantization error bound in all 30 cases.
-- Additional invalid-input checks rejected out-of-range indices, NaN positions, and fractional face indices.
-
-## CLI smoke test
-
-These commands succeeded locally on the generated `samples/icosphere.obj`:
-
-```bash
-python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere.mo3d --bits 16
-python -m middleout3d decode /tmp/icosphere.mo3d --out /tmp/icosphere-restored.obj
-```
-
-In that run, source and decoded meshes each contained 2,562 vertices and 5,120 faces; face connectivity was identical. At 16 bits, the resulting MO3D file was 30,265 bytes. The decoded coordinates differed from the source by a maximum absolute component difference of approximately `1.526e-05` in that test.
-
-## Repeat benchmark
-
-A five-repeat benchmark of six synthetic fixtures completed with zero benchmark errors in the local run. See [BASELINE_RESULTS.md](BASELINE_RESULTS.md) for the summary.
+All six fixtures had exact topology reconstruction; baseline and Prithvi produced the same quantized vertex coordinates and therefore the same geometric error. The detailed table and interpretation are in [BASELINE_RESULTS.md](BASELINE_RESULTS.md), with machine-readable data in [JSON](results/prithvi_ci_2026-10-25.json) and [CSV](results/prithvi_ci_2026-10-25.csv).
 
 ## Not established
 
-- No comparison against Draco has been performed yet.
-- No claim is made that MO3D beats LZ4, Draco, or any production codec.
-- Results use synthetic fixtures rather than a representative public CAD/robotics dataset.
-- The current format is lossy in vertex positions and drops normals, UVs, colors, textures and materials.
-- The decoder has not been security-audited for hostile files.
+- No comparison with Google Draco or LZ4 has been performed.
+- The benchmark fixtures are synthetic, not a representative CAD, scanning, point-cloud, or robotics dataset.
+- The timing measurements come from a shared hosted runner and are not universal performance claims.
+- Current format preserves XYZ geometry after quantization and triangle connectivity, but drops normals, UVs, colors, textures, materials, and other source-file metadata.
+- The decoder has not been security-audited for hostile or arbitrarily large inputs.
 
-These results describe the earlier local working copy. CI must run to confirm the repository copy on its own environment.
+These tests validate prototype correctness under the tested conditions; they do not establish production readiness or superiority to existing compression codecs.
