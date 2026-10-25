@@ -87,16 +87,21 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-connectivity-benchmark.json", encoding="utf-8"))
-          print("vertex order | method | source face order B | BFS face order B | size reduction %")
+          print("vertex order | method | source B | rotate-only B | BFS B | rotate delta % | BFS delta %")
           for row in report["aggregate"]:
               print(
                   f'{row["vertex_ordering"]} | {row["method"]} | '
-                  f'{row["source_total_bytes"]} | {row["bfs_total_bytes"]} | '
+                  f'{row["source_total_bytes"]} | {row["rotate_total_bytes"]} | {row["bfs_total_bytes"]} | '
+                  f'{row["rotate_size_reduction_vs_source_pct"]}% | '
                   f'{row["bfs_size_reduction_vs_source_pct"]}%'
               )
               if not (
-                  row["source_error_checks_passed"] and row["bfs_error_checks_passed"]
-                  and row["source_topology_checks_passed"] and row["bfs_topology_checks_passed"]
+                  row["source_error_checks_passed"]
+                  and row["rotate_error_checks_passed"]
+                  and row["bfs_error_checks_passed"]
+                  and row["source_topology_checks_passed"]
+                  and row["rotate_topology_checks_passed"]
+                  and row["bfs_topology_checks_passed"]
               ):
                   raise SystemExit(f'Face-order round-trip checks failed: {row["vertex_ordering"]}/{row["method"]}')
           if report["errors"]:
