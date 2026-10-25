@@ -520,7 +520,12 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         best_payload = None
         best_key = None
         normal_ratios = (0.375, 0.5, 0.625, 0.75, 0.875)
+        levels = (1 << bits) - 1
+        spans = vertices.max(axis=0) - vertices.min(axis=0)
+        max_error_budget = float(np.linalg.norm(spans / (2 * levels)))
         for ordering_index, candidate_ordering in enumerate(ORDERINGS):
+            traversal = vertex_order_for_mesh(vertices, faces, candidate_ordering)
+            ordered_vertices = vertices[traversal]
             for method_index, candidate_method in enumerate(CODEC_METHODS):
                 candidate_ratios = normal_ratios if candidate_method == "normal_fine_tangent" else (float(normal_step_ratio),)
                 for ratio_index, candidate_ratio in enumerate(candidate_ratios):
@@ -530,7 +535,11 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
                             method=candidate_method, ordering=candidate_ordering,
                             normal_step_ratio=candidate_ratio
                         )
+                        decoded_vertices, _, _ = decode_mesh(candidate)
                     except CodecError:
+                        continue
+                    candidate_error = np.linalg.norm(decoded_vertices - ordered_vertices, axis=1)
+                    if candidate_error.size and float(candidate_error.max()) > max_error_budget * 1.0001 + 1e-12:
                         continue
                     key = (len(candidate), method_index, ordering_index, ratio_index)
                     if best_key is None or key < best_key:
