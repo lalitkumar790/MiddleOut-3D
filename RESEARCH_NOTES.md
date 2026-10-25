@@ -237,3 +237,22 @@ The current CI workflow is testing the new order on six synthetic meshes, 16 bit
 ## Historical note on “Vedic Mathematics”
 
 The popular 16-sūtra system in Bharati Krishna Tirtha's modern book is not the same as a well-established corpus of algorithmic sutras in extant Vedic texts. S. G. Dani's *Vedic Mathematics in Perspective* discusses the weak documentary basis for attributing that system directly to an extant Atharvaveda appendix: [TIFR PDF](https://www.math.tifr.res.in/~dani/vmissc.pdf). For reproducible research, this project prioritizes identifiable sources such as Piṅgala's *Chandaḥśāstra* and the Śulbasūtras, and treats all modern analogies as hypotheses.
+
+
+## Predictive-cost traversal: empirical result and rejection from auto-selection
+
+The first predictive ordering assigned the next vertex by estimated signed-residual varint length to the latest visited adjacent vertex. The heuristic was changed to an O((V+E) log V) frontier traversal, then compared across six synthetic OBJ fixtures at 16-bit positions against source, BFS and Morton orderings, seven in-house coders, and a DracoPy 2.0.0 sweep. Full records: [JSON](results/predictive_ordering_study_2026-10-25.json), [CSV](results/predictive_ordering_study_2026-10-25.csv), [CI run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40195070244).
+
+The result is negative. Predictive ordering increased aggregate bytes versus BFS for every in-house method: baseline +38.9%, Prithvi +45.9%, tangent +63.1%, weighted tangent +52.2%, normal-fine tangent +51.8%, Chandas +51.5%, and adaptive Chandas +50.0%. It was not the best method/order combination for any of the six fixtures. Baseline encoding took 411.06 ms summed across the six meshes versus 44.92 ms for BFS and 16.51 ms for source order; these are one-repeat CI timings without a separate warmup. The order is now available for experiments but excluded from the auto search.
+
+The failure is informative: optimizing estimated coordinate residuals alone ignores the complete payload, particularly face-index deltas, traversal construction cost, and each coder's own prediction stencil. Any next traversal objective must optimize or approximate the *combined coordinate and connectivity stream*, then verify its total serialized size and speed.
+
+## Relevant mesh-connectivity literature: next target
+
+The current prototype serializes the face array as flat zigzag/varint index deltas followed by zlib. This is simple but leaves connectivity compression well behind established topology encoders.
+
+- Rossignac and Szymczak's 1999 EdgeBreaker connectivity method encodes a triangulated planar graph using a short CLERS symbol stream; their follow-up reports entropy-coded lengths around 0.91–1.26 bits per triangle on their evaluated meshes ([Wrap&Zip / EdgeBreaker paper](https://www.sciencedirect.com/science/article/pii/S0925-7721(99)00028-0)). This is a connectivity-specific representation, not directly comparable to our complete bitstreams without a matched mesh corpus.
+- Alliez and Desbrun's 2001 [Valence-Driven Connectivity Encoding for 3D Meshes](https://diglib.eg.org/items/5318ef03-07a9-4d30-9be5-d0adc309d75f) exploits vertex-valence patterns for lossless connectivity compression.
+- Marais, Gain and Shreiner's 2007 [Distance-Ranked Connectivity Compression of Triangle Meshes](https://diglib.eg.org/items/57a65691-acc2-4d79-bdb4-0a53bf1d8011) traverses mesh edges and ranks candidate closing vertices by their distance to a predicted position. This is especially relevant to our next experiment: use geometry to choose among connectivity continuations, then code the small rank instead of writing every face index.
+
+The next algorithm experiment should target face/connectivity coding rather than adding another coordinate predictor. A safe first version should add a new, opt-in connectivity stream (preserving triangle winding), round-trip it, and compare complete serialized sizes and decoding time against the current index-delta stream and Draco. The historic connection to *Citra Paddhati* remains analogy only; these connectivity algorithms are modern mesh-compression research.
