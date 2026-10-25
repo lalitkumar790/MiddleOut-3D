@@ -39,7 +39,7 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Generate deterministic benchmark meshes
         run: python -m middleout3d generate-fixtures --out samples
-      - name: Run baseline, Prithvi, and tangent benchmark across orderings
+      - name: Run baseline, Prithvi, tangent, weighted tangent, and adaptive comparison across orderings
         run: |
           python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '5' }}"
       - name: Print per-mesh comparison summary
@@ -47,31 +47,31 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | ordering | baseline B | Prithvi B | tangent B | Prithvi save % | tangent save % | baseline ms enc/dec | Prithvi ms enc/dec | tangent ms enc/dec | topology ok | same quantized baseline/Prithvi")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted tangent B | baseline savings % | Prithvi savings % | tangent savings % | weighted savings % | adaptive best")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
-                      f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | {result["tangent_bytes"]} | '
-                      f'{result["prithvi_size_reduction_vs_baseline_pct"]}% | {result["tangent_size_reduction_vs_baseline_pct"]}% | '
-                      f'{result["baseline_encode_median_ms"]}/{result["baseline_decode_median_ms"]} | '
-                      f'{result["prithvi_encode_median_ms"]}/{result["prithvi_decode_median_ms"]} | '
-                      f'{result["tangent_encode_median_ms"]}/{result["tangent_decode_median_ms"]} | '
-                      f'{result["baseline_topology_exact"] and result["prithvi_topology_exact"] and result["tangent_topology_exact"]} | '
-                      f'{result["quantized_positions_equal"]}'
+                      f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
+                      f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | '
+                      f'0.0 | {result["prithvi_size_reduction_vs_baseline_pct"]}% | '
+                      f'{result["tangent_size_reduction_vs_baseline_pct"]}% | '
+                      f'{result["weighted_tangent_size_reduction_vs_baseline_pct"]}% | '
+                      f'{row["best_candidate_method"]}/{row["best_candidate_ordering"]}/{row["best_candidate_bytes"]} B'
                   )
           if report["errors"]:
               print("BENCHMARK ERRORS:", report["errors"])
               raise SystemExit(1)
-          if not all(
-              result["baseline_topology_exact"]
-              and result["prithvi_topology_exact"]
-              and result["tangent_topology_exact"]
-              and result["quantized_positions_equal"]
-              and result["tangent_max_vertex_error"] <= row["max_error_bound_estimate"] * 1.0001 + 1e-12
-              for row in report["results"]
-              for result in row["ordering_results"]
-          ):
-              raise SystemExit("Ordering remapping, tangent error bound, or Prithvi reconstruction checks failed")
+          for row in report["results"]:
+              for result in row["ordering_results"]:
+                  if not result["quantized_positions_equal"]:
+                      raise SystemExit(f'Prithvi quantized positions differ: {row["name"]}/{result["ordering"]}')
+                  for method in ("baseline", "prithvi", "tangent", "weighted_tangent"):
+                      metrics = result["candidate_metrics"][method]
+                      if not metrics["topology_exact"]:
+                          raise SystemExit(f'Topology reconstruction failed: {row["name"]}/{result["ordering"]}/{method}')
+                      if metrics["max_vertex_error"] > row["max_error_bound_estimate"] * 1.0001 + 1e-12:
+                          raise SystemExit(f'Geometry error bound exceeded: {row["name"]}/{result["ordering"]}/{method}')
+
           PY
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
