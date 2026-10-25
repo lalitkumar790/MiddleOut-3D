@@ -13,18 +13,20 @@ Relevant existing work:
 - [Google Draco](https://github.com/google/draco) — established open-source compression for 3D meshes and point clouds.
 - [A Predictor for Triangle Mesh Compression Working in Tangent Space (GRAPP 2024)](https://www.scitepress.org/Papers/2024/123529/123529.pdf) — combines weighted parallelogram prediction with local-frame residuals; its authors report better rate-distortion than Draco on their evaluated meshes. Our tangent methods are a smaller research adaptation, not a reproduction of their full codec.
 - [Exploiting Connectivity to Improve the Tangential Part of Geometry Prediction (2013)](https://pubmed.ncbi.nlm.nih.gov/23846092/) — uses valence-informed weighted parallelogram prediction; this informs our MO3D v4 predictor.
+- The 2024 tangent-space paper also studies non-uniform precision in local coordinates: keeping more precision along the surface normal while relaxing tangential precision can improve rate-distortion at a comparable error budget. Our v5 experiment tests a simple fixed version of this idea, not the paper's complete codec.
 - [MPEG G-PCC](https://www.mpeg.org/standards/MPEG-I/9/) — standardized geometry-based point-cloud compression.
 - [Neural Compression for 3D Geometry Sets (ICCV 2025)](https://openaccess.thecvf.com/content/ICCV2025/html/Ren_Neural_Compression_for_3D_Geometry_Sets_ICCV_2025_paper.html) — neural compression for collections of 3D mesh models, reporting up to 900× in its studied setting. That result is for a specific representation and task, not a universal per-file promise.
 - [Mesh Compression with Quantized Neural Displacement Fields (2025)](https://diglib.eg.org/items/d54ad053-5b75-49a3-91a4-1750449b7418) — neural displacement-field approach for lossy mesh compression.
 
 ## Current prototype
 
-MO3D has four versioned coordinate coders:
+MO3D has five versioned coordinate coders:
 
 - **MO3D v1 baseline:** quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
 - **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, zigzag-coded, varint-encoded, then compressed with zlib.
 - **MO3D v3 tangent:** an unweighted parallelogram geometry predictor with residuals expressed in a local orthonormal frame.
 - **MO3D v4 weighted tangent:** a valence-informed weighted parallelogram predictor with residuals expressed in the same kind of local frame. The weights approximate local triangle angles from vertex valences and combine them with the known base-triangle angles, following the idea of published weighted-parallelogram research.
+- **MO3D v5 normal-fine tangent:** uses the weighted predictor, but quantizes the local normal residual more finely than the two tangential residuals.
 
 The weighted predictor uses the form
 
@@ -34,7 +36,24 @@ The weighted predictor uses the form
 
 with angle-derived weights inspired by the referenced research. This is a research adaptation, not an exact reproduction of the 2024 paper's full implementation. MO3D retains all earlier decoders and uses a different magic signature for each format version.
 
-**Adaptive option:** `--method auto` tests the four coders under source, BFS, and Morton orderings and returns the shortest resulting bitstream. This is a rate-first search over 12 candidates, so encoding can be much slower; it is useful when file size matters more than encode time. All tangent modes use a scalar residual step chosen so their theoretical Euclidean rounding bound matches the baseline's conservative quantization bound, while measured distortion is still recorded separately.
+### Non-uniform normal/tangent quantization (MO3D v5)
+
+Let the equal-step local-frame quantizer use a step `s = D/(sqrt(3)*L)`, where `D` is the bounding-box diagonal and `L = 2^B - 1`. The normal-fine variant uses
+
+```text
+s_normal = s / 2
+s_tangent = s * sqrt(11 / 8)   # for each of the two tangential components
+```
+
+This preserves the squared step budget:
+
+```text
+s_normal^2 + 2 * s_tangent^2 = 3 * s^2
+```
+
+and therefore the same conservative Euclidean rounding-error ceiling `D/(2*L)`. The intent is to spend precision in the normal direction, which is more directly related to surface shape, while allowing somewhat coarser representation along the surface. It is a hypothesis to measure, not a guaranteed rate-distortion improvement. We compare actual file size, maximum vertex error and RMSE on each mesh.
+
+**Adaptive option:** `--method auto` tests all five in-house coders under source, BFS, and Morton orderings and returns the shortest resulting bitstream. This is a rate-first search over 15 candidates, so encoding can be much slower; it is useful when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -113,6 +132,9 @@ python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid.mo3d 
 # Encode with weighted tangent prediction and breadth-first ordering
 python -m middleout3d encode samples/icosphere.obj --out results/icosphere-weighted.mo3d --bits 16 --method weighted_tangent --ordering bfs
 
+# Try finer precision along the local surface normal
+python -m middleout3d encode samples/icosphere.obj --out results/icosphere-normal-fine.mo3d --bits 16 --method normal_fine_tangent --ordering bfs
+
 # Search all four coders and all three orderings, retaining the smallest bitstream
 python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-auto.mo3d --bits 16 --method auto
 
@@ -133,8 +155,9 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 
 - `gzip_lossless_bytes`: gzip result for the original file bytes, including original formatting and any attributes in that file.
 - `mo3d_lossy_geometry_bytes`: absolute-coordinate baseline size containing only geometry and triangle topology.
-- `prithvi_bytes`, `tangent_bytes`, and `weighted_tangent_bytes`: total coder sizes for each ordering.
+- `prithvi_bytes`, `tangent_bytes`, `weighted_tangent_bytes`, and `normal_fine_tangent_bytes`: total coder sizes for each ordering.
 - `*_size_reduction_vs_baseline_pct`: size difference relative to the absolute baseline under the same ordering.
+- `normal_fine_tangent_steps`: per-axis local-frame quantization steps `[s_normal, s_tangent, s_tangent]` used by MO3D v5.
 - `*_geometry_max_vertex_error` and `*_geometry_rmse_vertex_distance`: measured distortion for each coder.
 - `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the four in-house coders and three orderings for that mesh.
 - `adaptive_encode_sweep_estimate_ms`: sum of the in-house candidate median encode times, a rough estimate of the work an exhaustive search requires.
