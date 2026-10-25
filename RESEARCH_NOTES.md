@@ -26,6 +26,61 @@ Given a triangle mesh with vertices $x_i\in\mathbb{R}^3$ and faces $F$:
 
 Because every parent has an index smaller than its child, decoding is causal: reconstruct $Q_i=\widehat Q_i+r_i$ in increasing vertex-index order. The residual representation is exact for the quantized integer grid. Geometry remains lossy only because of coordinate quantization.
 
+## Research-informed methods: tangent residuals and weighted prediction
+
+Two relevant works shaped the next prototype:
+
+- Vaněček, Hácha and Váša, **“A Predictor for Triangle Mesh Compression Working in Tangent Space” (GRAPP 2024)**, [paper PDF](https://www.scitepress.org/Papers/2024/123529/123529.pdf). It combines local-coordinate residuals with weighted parallelogram prediction; the authors report improved rate-distortion relative to Draco on their test meshes.
+- Váša and Brunnett, **“Exploiting Connectivity to Improve the Tangential Part of Geometry Prediction” (IEEE TVCG, 2013)**, [PubMed record](https://pubmed.ncbi.nlm.nih.gov/23846092/). The paper describes a weighted predictor using known base-triangle angles and valence-derived estimates for the target triangle.
+
+The results of these papers do not automatically transfer to our prototype. Our implementation is a smaller adaptation: it uses our own causal stencil traversal and quantization/varint format, and does not reproduce the full connectivity coding, context models, quantization scheme, or evaluation pipeline used in the publications.
+
+### MO3D v3: local-frame residuals
+
+For a target vertex \(O\), use an earlier base triangle with vertices \(L,R,B\). The classic parallelogram prediction is
+
+\[
+\hat v_O=v_L+v_R-v_B.
+\]
+
+Construct a deterministic orthonormal frame from the base triangle and prediction. Express the residual in that local frame:
+
+\[
+r_{\mathrm{local}}=F^\top(v_O-\hat v_O).
+\]
+
+Quantize the three local components with a scalar step derived from the mesh bounding-box diagonal, then zigzag/varint-code them and compress with zlib. Seed vertices that lack a causal stencil use absolute quantized coordinates.
+
+If \(D\) is the bounding-box diagonal and \(L=2^B-1\), the selected scalar step is
+
+\[
+s=\frac{D}{\sqrt{3}L}.
+\]
+
+Each local component's rounding error is at most \(s/2\), giving a conservative Euclidean bound \(\sqrt{3}s/2=D/(2L)\), matching the baseline quantizer's bounding-box half-diagonal bound. This sets the same worst-case budget, not identical actual distortion; the benchmark measures each reconstruction error directly.
+
+### MO3D v4: valence-weighted tangent prediction
+
+The weighted predictor generalizes the classic parallelogram to
+
+\[
+\hat v_O=w_1v_L+w_2v_R+(1-w_1-w_2)v_B.
+\]
+
+Let \(\alpha,\beta\) be the known interior angles at \(L,R\) in the base triangle. Estimate the three new-triangle angles from vertex valences \(d_L,d_R,d_O\): first use inverse-valence values \(1/d_i\), then normalize them to sum to \(\pi\); \(\gamma,\delta\) are the estimates at \(L,R\). The implementation uses the weighted-parallelogram relation reported in the literature:
+
+\[
+w_1=\frac{\cot\beta+\cot\delta}{\cot\delta+\cot\gamma},
+\qquad
+w_2=\frac{\cot\alpha+\cot\gamma}{\cot\delta+\cot\gamma}.
+\]
+
+For degenerate or ill-conditioned stencils, it falls back to the classic parallelogram predictor. The same deterministic weights and local frame are recomputed by the decoder from topology and previously reconstructed positions, so weights are not stored per vertex. The predictor remains experimental, especially for boundary vertices and irregular valences.
+
+### Adaptive size selection
+
+The \`auto\` encoder tests all four available coders under source, BFS, and Morton traversal and emits the shortest serialized candidate. This makes the output no larger than any tested candidate for a given mesh and parameter setting, but requires up to 12 encodes. It is a rate-first option, not a fast default. It also does not prove superiority to Draco because the test candidates are our own methods and the current assets are geometry-only.
+
 ## Evaluation questions
 
 - Does Prithvi reduce coordinate-stream and total-file size versus the absolute-coordinate baseline at equal position precision?
@@ -44,12 +99,12 @@ Because every parent has an index smaller than its child, decoding is causal: re
 
 ## Next experiments
 
-1. Extend the ordering study to real-world CAD, scan, and robotics meshes with redistribution rights.
-2. Optimize the Python BFS ordering and residual-varint loops; BFS currently improves size on the synthetic aggregate but slows encoding and decoding.
-3. Compare additional deterministic traversal heuristics, including degree-aware neighbor visits, with results held out from tuning.
+1. Extend the four-coder/order study to real-world CAD, scan, and robotics meshes with redistribution rights.
+2. Optimize Python stencil construction, local-frame calculation and residual coding; the tangent variants may save bytes but are much slower on larger fixtures.
+3. Evaluate angle-weighted prediction on boundary-heavy and irregular meshes; do not tune it only to our six synthetic fixtures.
 4. Add a Draco baseline at comparable distortion and with the same attribute set.
-5. Add surface-distance measures for topology-changing codecs and record peak memory.
-6. Consider multi-parent prediction only after the single-parent predictor is measured reproducibly on a representative dataset.
+5. Add perceptual and surface-distance metrics, and record peak memory.
+6. Explore learned prediction or neural displacement fields only on a carefully chosen task: some recent methods compress many related models together or represent a surface implicitly, so their reported ratios are not directly comparable to our standalone per-mesh bitstreams.
 
 ## First vertex ordering results
 
