@@ -4,9 +4,9 @@
 
 ## Automated CI validation
 
-- **Unit tests:** 17 tests passed on Python 3.10, 3.12, and 3.13 in the [latest test run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40169914630).
-- **CLI smoke tests:** baseline, weighted tangent + BFS, and adaptive encode/decode commands are exercised on generated mesh fixtures.
-- **Research-coder benchmark:** the benchmark now compares baseline, Prithvi, tangent, weighted tangent, and Google Draco under source, BFS and Morton orderings. See the [current GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions).
+- **Unit tests:** 18 tests cover Python 3.10, 3.12, and 3.13 in the [latest test run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40169914630).
+- **CLI smoke tests:** baseline, weighted tangent + BFS, normal-fine tangent + BFS, and adaptive encode/decode commands are exercised on generated mesh fixtures.
+- **Research-coder benchmark:** the benchmark now compares baseline, Prithvi, tangent, weighted tangent, normal-fine tangent, and Google Draco under source, BFS and Morton orderings. See the [current GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions).
 
 ## What the tests cover
 
@@ -16,8 +16,9 @@
 - Legacy MO3D v1 decoding remains supported, and version-signature mismatches are rejected.
 - Source, breadth-first (BFS), and Morton orderings each produce a valid vertex-index permutation with consistently remapped face indices.
 - Baseline and Prithvi both round-trip correctly under all three orderings, including topology restoration after mapping back to source indexing.
-- Tangent and weighted-tangent streams round-trip under all three orderings and remain within the baseline's conservative Euclidean quantization-error bound on the test fixture.
-- Adaptive mode returns the smallest bitstream among all four in-house coders and three orderings tested for a mesh.
+- Tangent, weighted-tangent and normal-fine tangent streams round-trip under all three orderings and remain within the baseline's conservative Euclidean quantization-error bound on the test fixture.
+- The normal-fine local-frame steps give the normal component half the base step while preserving the same sum of squared step sizes as the equal-step variant.
+- Adaptive mode returns the smallest bitstream among all five in-house coders and three orderings tested for a mesh.
 - Unsupported methods and bit depths, corrupt bitstreams, zero-extent tangent meshes, and invalid version combinations are rejected.
 
 ## First research-inspired codec results
