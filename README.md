@@ -137,6 +137,12 @@ The decoder recomputes parents from the face stream, so there is no separate par
 
 When a vertex's earlier adjacent neighbor is geometrically nearby, its residuals can have small magnitudes and require fewer varint bytes. But vertex ordering is crucial: non-local index assignments can yield large residuals, and the predictor may encode some meshes worse than the absolute baseline. zlib can also compress absolute integer streams efficiently. The benchmark therefore measures Prithvi **against the baseline at the same bit depth** instead of assuming it is better.
 
+## Face-connectivity coding experiment
+
+The triangle-index stream now has an optional `face_ordering=bfs` mode. It traverses the triangle dual graph (adjacent faces share an edge), chooses a deterministic BFS face sequence, then chooses among the three cyclic rotations of each triangle to minimize local signed-varint delta cost relative to the previous index. The three rotations preserve winding; faces are never reversed. This changes face order and cyclic starting points, but preserves the represented oriented triangle set.
+
+This is a small, modern connectivity-stream experiment inspired by the general insight behind topology encoders—not an implementation of EdgeBreaker. It is measured against the current flat face-index delta stream; it will remain optional unless complete bitstream size and runtime improve.
+
 ## Quick start
 
 Python 3.10+ is recommended.
@@ -153,8 +159,11 @@ python -m pip install -r requirements-benchmark.txt
 # Generate reproducible OBJ fixtures without downloading anything
 python -m middleout3d generate-fixtures --out samples
 
-# Run the first benchmark; JSON and CSV reports are written
+# Compare coders and vertex orderings; JSON and CSV reports are written
 python -m middleout3d benchmark samples --out results/baseline.json --bits 16 --repeats 5
+
+# Compare source vs BFS face-stream ordering, with topology/error checks
+python -m middleout3d benchmark-connectivity samples --out results/connectivity.json --bits 16 --repeats 1
 
 # Encode with the Prithvi predictor, preserving source order
 python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid.mo3d --bits 16 --method prithvi
