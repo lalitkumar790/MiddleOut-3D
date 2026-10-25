@@ -320,6 +320,7 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         normal_fine_metrics = coder_metrics["normal_fine_tangent"]
         chandas_metrics = coder_metrics["chandas_tangent"]
         chandas_adaptive_metrics = coder_metrics["chandas_adaptive_tangent"]
+        chandas_segmented_metrics = coder_metrics["chandas_segmented_tangent"]
         positions_equal = bool(
             np.array_equal(coder_decoded_vertices["baseline"], coder_decoded_vertices["prithvi"])
         )
@@ -339,6 +340,21 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
                 (1 - chandas_metrics["bytes"] / weighted_metrics["bytes"]) * 100, 4
             ) if weighted_metrics["bytes"] else None,
             "chandas_adaptive_tangent_bytes": chandas_adaptive_metrics["bytes"],
+            "chandas_segmented_tangent_bytes": chandas_segmented_metrics["bytes"],
+            "chandas_segmented_tangent_size_reduction_vs_baseline_pct": round(
+                (1 - chandas_segmented_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
+            "chandas_segmented_tangent_size_reduction_vs_weighted_pct": round(
+                (1 - chandas_segmented_metrics["bytes"] / weighted_metrics["bytes"]) * 100, 4
+            ) if weighted_metrics["bytes"] else None,
+            "chandas_segmented_tangent_size_reduction_vs_adaptive_pct": round(
+                (1 - chandas_segmented_metrics["bytes"] / chandas_adaptive_metrics["bytes"]) * 100, 4
+            ) if chandas_adaptive_metrics["bytes"] else None,
+            "chandas_segmented_tangent_encode_median_ms": chandas_segmented_metrics["encode_median_ms"],
+            "chandas_segmented_tangent_decode_median_ms": chandas_segmented_metrics["decode_median_ms"],
+            "chandas_segmented_tangent_max_vertex_error": chandas_segmented_metrics["max_vertex_error"],
+            "chandas_segmented_tangent_rmse_vertex_distance": chandas_segmented_metrics["rmse_vertex_distance"],
+            "chandas_segmented_tangent_topology_exact": chandas_segmented_metrics["topology_exact"],
             "chandas_adaptive_tangent_size_reduction_vs_baseline_pct": round(
                 (1 - chandas_adaptive_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
             ) if baseline_metrics["bytes"] else None,
@@ -528,6 +544,15 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "chandas_tangent_size_reduction_vs_baseline_pct": source["chandas_tangent_size_reduction_vs_baseline_pct"],
         "chandas_tangent_size_reduction_vs_weighted_pct": source["chandas_tangent_size_reduction_vs_weighted_pct"],
         "chandas_adaptive_tangent_bytes": source["chandas_adaptive_tangent_bytes"],
+        "chandas_segmented_tangent_bytes": source["chandas_segmented_tangent_bytes"],
+        "chandas_segmented_tangent_size_reduction_vs_baseline_pct": source["chandas_segmented_tangent_size_reduction_vs_baseline_pct"],
+        "chandas_segmented_tangent_size_reduction_vs_weighted_pct": source["chandas_segmented_tangent_size_reduction_vs_weighted_pct"],
+        "chandas_segmented_tangent_size_reduction_vs_adaptive_pct": source["chandas_segmented_tangent_size_reduction_vs_adaptive_pct"],
+        "chandas_segmented_tangent_encode_median_ms": source["chandas_segmented_tangent_encode_median_ms"],
+        "chandas_segmented_tangent_decode_median_ms": source["chandas_segmented_tangent_decode_median_ms"],
+        "chandas_segmented_tangent_geometry_max_vertex_error": source["chandas_segmented_tangent_max_vertex_error"],
+        "chandas_segmented_tangent_geometry_rmse_vertex_distance": source["chandas_segmented_tangent_rmse_vertex_distance"],
+        "chandas_segmented_tangent_topology_exact": source["chandas_segmented_tangent_topology_exact"],
         "chandas_adaptive_tangent_size_reduction_vs_baseline_pct": source["chandas_adaptive_tangent_size_reduction_vs_baseline_pct"],
         "chandas_adaptive_tangent_size_reduction_vs_weighted_pct": source["chandas_adaptive_tangent_size_reduction_vs_weighted_pct"],
         "chandas_adaptive_tangent_size_reduction_vs_chandas_pct": source["chandas_adaptive_tangent_size_reduction_vs_chandas_pct"],

@@ -247,6 +247,37 @@ The result is negative. Predictive ordering increased aggregate bytes versus BFS
 
 The failure is informative: optimizing estimated coordinate residuals alone ignores the complete payload, particularly face-index deltas, traversal construction cost, and each coder's own prediction stencil. Any next traversal objective must optimize or approximate the *combined coordinate and connectivity stream*, then verify its total serialized size and speed.
 
+## Research experiment: DP-segmented adaptive enumerative residual coding (MO3D v8)
+
+**Status: implemented on \`research/chandas-segmented-blocks\`; benchmark pending.**
+
+### Mathematical objective
+
+The v7 adaptive Chandas encoder compares direct zigzag-varints with enumerative nonzero-position coding in fixed \(B=64\)-symbol blocks. It cannot shift a block boundary to fit a sparse run or a denser region. The v8 candidate considers block lengths \(B\in\{16,32,64,128,256\}\), plus a final tail shorter than 16 symbols. Within each block it chooses the shorter pre-zlib body:
+
+- Direct cost: \(L_d(r)=\sum_i \operatorname{varintBytes}(\operatorname{zigzag}(r_i))\).
+- Sparse enumerative cost: \(L_s(r)=\operatorname{varintBytes}(k)+\lceil\log_2\binom{n}{k}\rceil/8\) rounded to whole bytes, plus varint lengths of the \(k\) nonzero signed amplitudes.
+- Framing cost: \(L_f(n)=\operatorname{varintBytes}(n)+1\) mode byte.
+
+For residual sequence \(r_0,\ldots,r_{N-1}\), the encoder solves the segmentation recurrence
+\[
+D(i)=\min_{n\in\mathcal{B}(i)}\{L_f(n)+\min(L_d(r_{i:i+n}),L_s(r_{i:i+n}))+D(i+n)\},\quad D(N)=0,
+\]
+where \(\mathcal{B}(i)\) contains supported lengths that fit and permits a shorter block only when it is the final tail. Ties are deterministic. This is \(O(NK B_{max})\) time for \(K=5\) candidate lengths in the straightforward implementation and \(O(N)\) backpointer/cost storage; in practice it bounds the candidate scan to five lengths per starting offset and at most 256 symbols per candidate.
+
+This minimizes the exact *uncompressed block-stream byte count*, not zlib size. As the outer zlib compressor has context across boundaries, the recurrence is a proxy, and the candidate must be compared by complete MO3D payload bytes, encode/decode time, maximum vertex error, RMSE and exact topology. Version 8 uses a new \`MO3D\\x08\` signature / \`CHS3\` residual signature so v1-v7 bitstreams and their decoder paths are unchanged.
+
+### Historical and modern distinctions
+
+The inspiration is the general rank/unrank pattern in Piṅgala's prosody algorithms. Jayant Shah's historical review describes enumeration and indexing of metrical patterns and fixed-weight counting, while warning that particular later interpretations of *meru-prastāra* are debated ([University of Hyderabad-hosted paper](https://sanskrit.uohyd.ac.in/faculty/amba/PUBLICATIONS/Lectures/UoHyd/Material/Pingala.pdf)). The v8 algorithm is a modern dynamic program over combinatorial blocks; no historical source is claimed to contain this codec. The technical novelty, if any, lies only in this specific encoder adaptation and must be determined empirically.
+
+### Falsification and pending tests
+
+- Unit tests prove variable-length residual round trips, corrupted-block rejection, the DP cost against exhaustive segmentation on a small fixture, and end-to-end topology/error preservation.
+- CI runs three Python versions; a separate synthetic full-payload benchmark compares v8 against v6/v7 and other MO3D coders at the same 16-bit positions over six mesh fixtures, three vertex orderings, four face strategies and repeated encode/decode timings.
+- Reject or narrow the method if full-payload bytes worsen, speed overhead is excessive, or its gains are limited to tiny synthetic fixtures. No compression win is claimed before the benchmark artifact is available.
+
+
 ## Relevant mesh-connectivity literature: next target
 
 The current prototype serializes the face array as flat zigzag/varint index deltas followed by zlib. This is simple but leaves connectivity compression well behind established topology encoders.

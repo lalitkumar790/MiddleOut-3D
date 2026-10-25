@@ -1,0 +1,117 @@
+name: Chandas segmented-block research
+
+on:
+  push:
+    branches: ["research/chandas-segmented-blocks"]
+    paths:
+      - "middleout3d/**"
+      - "tests/**"
+      - ".github/workflows/chandas-segmented-blocks.yml"
+      - "requirements.txt"
+      - "requirements-benchmark.txt"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out experimental branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-benchmark.txt
+      - name: Install benchmark dependencies
+        run: python -m pip install -r requirements-benchmark.txt
+      - name: Generate deterministic fixtures
+        run: python -m middleout3d generate-fixtures --out samples
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Benchmark complete payloads
+        run: python -m middleout3d benchmark-connectivity samples --out results/chandas-segmented-blocks.json --bits 16 --repeats 3
+      - name: Validate results and record experiment
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("results/chandas-segmented-blocks.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          if report["errors"]:
+              raise SystemExit(f"Benchmark errors: {report['errors']}")
+          if "chandas_segmented_tangent" not in report["configuration"]["methods"]:
+              raise SystemExit("v8 method missing from benchmark configuration")
+
+          strategies = ("source_face_stream", "rotate_face_stream", "rotate_dp_face_stream", "bfs_face_stream")
+          totals = {}
+          records = {}
+          for row in report["results"]:
+              method = row["method"]
+              totals.setdefault(method, 0)
+              records.setdefault(method, {})
+              for strategy in strategies:
+                  metrics = row[strategy]
+                  if not metrics["topology_exact"]:
+                      raise SystemExit(f"Topology failure: {row['mesh']}/{method}/{row['vertex_ordering']}/{strategy}")
+                  if not metrics["error_budget_met"]:
+                      raise SystemExit(f"Error-budget failure: {row['mesh']}/{method}/{row['vertex_ordering']}/{strategy}")
+                  totals[method] += metrics["bytes"]
+                  records[method][(row["mesh"], row["vertex_ordering"], strategy)] = metrics["bytes"]
+
+          segmented = "chandas_segmented_tangent"
+          comparators = ("chandas_adaptive_tangent", "chandas_tangent", "weighted_tangent", "baseline")
+          for method in comparators:
+              if method not in totals:
+                  raise SystemExit(f"Missing comparison method: {method}")
+          wins = {}
+          for method in comparators:
+              pairs = [(records[segmented][key], records[method][key]) for key in records[segmented] if key in records[method]]
+              if not pairs:
+                  raise SystemExit(f"No paired comparison: {segmented} vs {method}")
+              wins[method] = {
+                  "wins": sum(a < b for a, b in pairs),
+                  "ties": sum(a == b for a, b in pairs),
+                  "losses": sum(a > b for a, b in pairs),
+                  "cases": len(pairs),
+              }
+          summary = [
+              f"{method}={totals[method]} B"
+              for method in (segmented, *comparators)
+          ]
+          print("TOTALS | " + " | ".join(summary))
+          for method, outcome in wins.items():
+              print(f"PAIRED {segmented} vs {method}: {outcome['wins']}/{outcome['ties']}/{outcome['losses']} wins/ties/losses over {outcome['cases']} matched mesh/order/face-strategy cases")
+
+          log_path = Path("research/chandas-segmented-blocks/EXPERIMENT_LOG.md")
+          with log_path.open("a", encoding="utf-8") as handle:
+              handle.write("\n\n## E001 — DP-segmented adaptive Chandas residual blocks\n\n")
+              handle.write(f"- GitHub Actions run: {os.environ['RUN_URL']}\n")
+              handle.write(f"- Source commit tested: {os.environ['SOURCE_SHA']}.\n")
+              handle.write("- Configuration: six deterministic synthetic fixtures, 16-bit positions, three vertex orderings, four face-stream strategies, and three encode/decode timing repetitions.\n")
+              handle.write("- The workflow required every codec/order/face-strategy row to pass exact oriented topology and the common per-axis quantization error bound before recording totals.\n")
+              handle.write("- Aggregate bytes across the same mesh/order/face-strategy grid: " + "; ".join(summary) + ".\n")
+              handle.write("- Paired wins/ties/losses (v8 compared to each method): " + "; ".join(f"{method} {d['wins']}/{d['ties']}/{d['losses']} of {d['cases']}" for method, d in wins.items()) + ".\n")
+              handle.write("- These are synthetic-fixture results only. The segmentation DP minimizes framed pre-zlib bytes; complete MO3D payload bytes determine the empirical result. No general compression or Draco superiority is inferred.\n")
+
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/chandas-segmented-blocks.json results/chandas-segmented-blocks.csv research/chandas-segmented-blocks/EXPERIMENT_LOG.md
+          if git diff --cached --quiet; then
+            echo "No research artifacts changed."
+          else
+            git commit -m "[skip ci] research: archive segmented Chandas benchmark"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi

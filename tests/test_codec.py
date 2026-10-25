@@ -6,7 +6,9 @@ import trimesh
 
 from middleout3d.codec import (
     AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_CODING_OPTIONS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
-    _encode_chandas_sparse_signed, _decode_chandas_sparse_signed, _encode_varint, _zigzag_encode, _reorder_faces_for_stream,
+    _encode_chandas_sparse_signed, _decode_chandas_sparse_signed, _encode_chandas_sparse_block,
+    _encode_chandas_segmented_residuals, _decode_chandas_segmented_residuals,
+    _encode_varint, _zigzag_encode, _reorder_faces_for_stream,
 )
 
 
@@ -69,6 +71,91 @@ class CodecTests(unittest.TestCase):
                 encoded = _encode_chandas_sparse_signed(values)
                 decoded = _decode_chandas_sparse_signed(encoded, len(values))
                 self.assertEqual(decoded, values)
+
+    def test_chandas_segmented_residual_stream_roundtrips_variable_blocks(self):
+        cases = [
+            [],
+            [0],
+            [0] * 15,
+            [0] * 16,
+            [1, -1, 0, 0, 7, -12] * 11,
+            [index % 13 - 6 for index in range(257)],
+            [0] * 256 + [4, 0, -2] + [0] * 60,
+        ]
+        for values in cases:
+            with self.subTest(length=len(values)):
+                encoded = _encode_chandas_segmented_residuals(values)
+                decoded, cursor = _decode_chandas_segmented_residuals(
+                    encoded, 0, len(values)
+                )
+                self.assertEqual(decoded, values)
+                self.assertEqual(cursor, len(encoded))
+
+    def test_chandas_segmented_partition_matches_bruteforce_cost(self):
+        values = [0, 0, 2, 0, -1, 0, 0, 7, 0, 0, 0, -3, 0, 0, 1,
+                  0, 4, 0, 0, 0, 0, -2, 0, 5, 0, 0, 0, 0, 1, 0,
+                  0, 0, 0, 0, 0, -1, 0, 0, 2]
+        encoded = _encode_chandas_segmented_residuals(values)
+
+        def block_cost(block):
+            direct = b"".join(
+                _encode_varint(_zigzag_encode(int(value))) for value in block
+            )
+            sparse = _encode_chandas_sparse_block(block)
+            return len(_encode_varint(len(block))) + 1 + min(len(direct), len(sparse))
+
+        def brute_force(position):
+            if position == len(values):
+                return 0
+            remaining = len(values) - position
+            lengths = [size for size in (16, 32, 64, 128, 256) if size <= remaining]
+            if remaining < 16:
+                lengths.append(remaining)
+            return min(
+                block_cost(values[position:position + length])
+                + brute_force(position + length)
+                for length in lengths
+            )
+
+        self.assertEqual(len(encoded), brute_force(0))
+
+    def test_chandas_segmented_decoder_rejects_invalid_blocks(self):
+        with self.assertRaises(CodecError):
+            _decode_chandas_segmented_residuals(b"\x00", 0, 5)
+        with self.assertRaises(CodecError):
+            _decode_chandas_segmented_residuals(_encode_varint(5) + b"\x02", 0, 5)
+        with self.assertRaises(CodecError):
+            _decode_chandas_segmented_residuals(_encode_varint(6) + b"\x00", 0, 5)
+        # A supported block size is still invalid when it exceeds the remaining count.
+        with self.assertRaises(CodecError):
+            _decode_chandas_segmented_residuals(_encode_varint(16) + b"\x00", 0, 5)
+
+    def test_chandas_segmented_tangent_roundtrip_preserves_error_and_topology(self):
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                ordered_vertices, ordered_faces, _ = reorder_mesh(
+                    self.vertices, self.faces, ordering
+                )
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=16,
+                    method="chandas_segmented_tangent", ordering=ordering,
+                )
+                decoded_vertices, decoded_faces, header = decode_mesh(payload)
+                self.assertEqual(header["version"], 8)
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 8]))
+                self.assertEqual(
+                    header["coordinate_coder"],
+                    "chandas-segmented-block-adaptive-weighted-tangent-residual-varint-zlib",
+                )
+                self.assertTrue(np.array_equal(decoded_faces, ordered_faces))
+                max_error = float(
+                    np.linalg.norm(decoded_vertices - ordered_vertices, axis=1).max()
+                )
+                error_bound = float(np.linalg.norm(
+                    (ordered_vertices.max(axis=0) - ordered_vertices.min(axis=0))
+                    / (2 * ((1 << 16) - 1))
+                ))
+                self.assertLessEqual(max_error, error_bound * 1.0001 + 1e-12)
 
     def test_chandas_rejects_corrupt_sparse_pattern_streams(self):
         with self.assertRaises(CodecError):
@@ -281,7 +368,7 @@ class CodecTests(unittest.TestCase):
         spans = self.vertices.max(axis=0) - self.vertices.min(axis=0)
         error_budget = np.linalg.norm(spans / (2 * levels))
         candidates = []
-        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent", "chandas_adaptive_tangent")
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent", "chandas_adaptive_tangent", "chandas_segmented_tangent")
         for ordering in AUTO_ORDERINGS:
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
@@ -320,6 +407,7 @@ class CodecTests(unittest.TestCase):
                 "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
                 "chandas-weighted-tangent-sparse-enumerative-varint-zlib",
                 "chandas-adaptive-weighted-tangent-residual-varint-zlib",
+                "chandas-segmented-block-adaptive-weighted-tangent-residual-varint-zlib",
             ),
         )
         if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
@@ -342,7 +430,7 @@ class CodecTests(unittest.TestCase):
         return sorted(canonical)
 
     def test_bfs_face_ordering_preserves_oriented_triangle_topology(self):
-        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_adaptive_tangent")
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_adaptive_tangent", "chandas_segmented_tangent")
         for vertex_ordering in ("source", "bfs", "morton"):
             ordered_vertices, ordered_faces, _ = reorder_mesh(
                 self.vertices, self.faces, vertex_ordering
