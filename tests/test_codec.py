@@ -40,6 +40,7 @@ class CodecTests(unittest.TestCase):
         self.assertTrue(np.array_equal(faces, baseline_faces))
         self.assertTrue(np.array_equal(vertices, baseline_vertices))
         self.assertIn("prithvi", header["coordinate_coder"])
+        self.assertEqual(header["version"], 2)
         self.assertLessEqual(
             np.linalg.norm(vertices - self.vertices, axis=1).max(),
             np.linalg.norm(
