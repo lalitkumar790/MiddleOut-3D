@@ -49,6 +49,8 @@ class ConnectivityBenchmarkSchemaTests(unittest.TestCase):
             for row in report["aggregate"]:
                 for field in aggregate_fields:
                     self.assertIn(field, row)
+                self.assertIsNotNone(row["rotate_dp_size_reduction_vs_source_pct"])
+                self.assertIsNotNone(row["rotate_dp_size_reduction_vs_rotate_pct"])
                 self.assertTrue(row["rotate_dp_error_checks_passed"])
                 self.assertTrue(row["rotate_dp_topology_checks_passed"])
 
