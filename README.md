@@ -147,8 +147,16 @@ A published result must compare equivalent payloads and attribute sets, with the
 
 MO3D v1/v2 is experimental. The decoder validates headers, stream lengths, coordinate counts, and triangle indices, but this has not been audited for hostile input or production use. Do not decode untrusted files in a privileged workflow.
 
-## Measured baseline and Prithvi experiment
+## Measured baseline, Prithvi and vertex ordering
 
-See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) for the latest hosted baseline-versus-Prithvi comparison. The archived [Prithvi JSON report](results/prithvi_ci_2026-10-25.json) and [CSV report](results/prithvi_ci_2026-10-25.csv) record the six-fixture run. The earlier [initial baseline JSON](results/baseline.json) / [CSV](results/baseline.csv) remain as the pre-Prithvi exploratory snapshot.
+See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) for the full hosted experiments. The latest [vertex-ordering JSON](results/vertex_ordering_study_2026-10-25.json) and [CSV](results/vertex_ordering_study_2026-10-25.csv) compare source order, BFS, and Morton under both coordinate coders.
 
-The first Prithvi run reduced the sum of encoded bytes across six synthetic fixtures by 23.4974%, but it was smaller on only four of six meshes and slower than the baseline for every fixture. That is a workload-specific result, not evidence of a universal compression breakthrough. No comparison against Draco or LZ4 has been performed.
+For six synthetic fixtures at 16 bits per axis:
+
+| Ordering | Absolute baseline total | Prithvi total | Prithvi reduction vs same ordering |
+|---|---:|---:|---:|
+| Source | 61,956 B | 47,436 B | 23.4360% |
+| BFS | 49,634 B | 36,345 B | 26.7740% |
+| Morton | 79,687 B | 69,734 B | 12.4901% |
+
+BFS + Prithvi was the smallest tested configuration, but the predictor and BFS ordering were slower than the baseline in the hosted measurements. Morton performed worse on this fixture set. These results are exploratory and do not establish superiority over Draco or LZ4.
