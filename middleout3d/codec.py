@@ -17,7 +17,9 @@ from typing import Any
 
 import numpy as np
 
-MAGIC = b"MO3D\x01"
+MAGIC_V1 = b"MO3D\x01"
+MAGIC_V2 = b"MO3D\x02"
+MAGIC = MAGIC_V1  # backward-compatible name for the original v1 signature
 MAX_HEADER_BYTES = 1_000_000
 MAX_ITEMS = 100_000_000
 METHODS = ("baseline", "prithvi")
