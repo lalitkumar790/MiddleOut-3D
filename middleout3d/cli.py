@@ -3,6 +3,7 @@ import argparse
 import json
 
 from .benchmark import benchmark_directory
+from .connectivity_benchmark import benchmark_connectivity_directory
 from .codec import FACE_ORDERINGS, ORDERINGS, decode_file, encode_file
 from .fixtures import generate_fixtures
 
@@ -28,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--out", default="results/baseline.json")
     bench.add_argument("--bits", type=int, default=16)
     bench.add_argument("--repeats", type=int, default=3)
+    conn = sub.add_parser("benchmark-connectivity", help="compare source vs BFS face ordering while preserving triangle winding")
+    conn.add_argument("input_dir", nargs="?", default="samples")
+    conn.add_argument("--out", default="results/connectivity-benchmark.json")
+    conn.add_argument("--bits", type=int, default=16)
+    conn.add_argument("--repeats", type=int, default=1)
     return parser
 
 
@@ -43,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(decode_file(args.input, args.out), indent=2))
         elif args.command == "benchmark":
             print(json.dumps(benchmark_directory(args.input_dir, args.out, args.bits, args.repeats), indent=2))
+        elif args.command == "benchmark-connectivity":
+            print(json.dumps(benchmark_connectivity_directory(args.input_dir, args.out, args.bits, args.repeats), indent=2))
         return 0
     except Exception as exc:
         print(f"middleout3d: error: {exc}")
