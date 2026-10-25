@@ -3,10 +3,12 @@
 ## 0.3.0 — Non-uniform local-frame quantization experiment
 
 - Added MO3D v5 `normal_fine_tangent`: a weighted tangent-space predictor with finer quantization along the local surface normal and coarser steps in the two tangential directions.
-- Chose local residual steps so their squared step budget matches the equal-step tangent variant's theoretical Euclidean rounding-error bound.
+- Added a five-point normal-step-ratio sweep (0.375–0.875) for adaptive selection; candidates are selected only when they meet the baseline maximum-error bound.
+- Chose local residual steps so their squared step budget matches the equal-step tangent variant's theoretical Euclidean rounding-error bound, and recorded local normal/tangent reconstruction errors.
 - Added v5 stream magic and decoder support while retaining v1–v4 decoding.
 - Expanded benchmark reports and adaptive selection to five in-house coders across source, BFS, and Morton ordering.
 - Added tests for v5 header/signature compatibility, non-uniform step sizes, topology preservation and measured geometric-error bounds.
+- Expanded benchmark results to include the per-ratio sweep, selected ratio, and local normal-vs-tangential error metrics.
 - Added CLI smoke testing for the new normal-fine method.
 
 ## 0.2.0 — Research-inspired predictors and codec comparison
