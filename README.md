@@ -11,18 +11,30 @@ The first milestone is a repeatable measurement pipeline. It includes a small ge
 Relevant existing work:
 
 - [Google Draco](https://github.com/google/draco) — established open-source compression for 3D meshes and point clouds.
+- [A Predictor for Triangle Mesh Compression Working in Tangent Space (GRAPP 2024)](https://www.scitepress.org/Papers/2024/123529/123529.pdf) — combines weighted parallelogram prediction with local-frame residuals; its authors report better rate-distortion than Draco on their evaluated meshes. Our tangent methods are a smaller research adaptation, not a reproduction of their full codec.
+- [Exploiting Connectivity to Improve the Tangential Part of Geometry Prediction (2013)](https://pubmed.ncbi.nlm.nih.gov/23846092/) — uses valence-informed weighted parallelogram prediction; this informs our MO3D v4 predictor.
 - [MPEG G-PCC](https://www.mpeg.org/standards/MPEG-I/9/) — standardized geometry-based point-cloud compression.
 - [Neural Compression for 3D Geometry Sets (ICCV 2025)](https://openaccess.thecvf.com/content/ICCV2025/html/Ren_Neural_Compression_for_3D_Geometry_Sets_ICCV_2025_paper.html) — neural compression for collections of 3D mesh models, reporting up to 900× in its studied setting. That result is for a specific representation and task, not a universal per-file promise.
 - [Mesh Compression with Quantized Neural Displacement Fields (2025)](https://diglib.eg.org/items/d54ad053-5b75-49a3-91a4-1750449b7418) — neural displacement-field approach for lossy mesh compression.
 
 ## Current prototype
 
-MO3D has two versioned coordinate coding methods and three vertex traversal orderings:
+MO3D has four versioned coordinate coders:
 
-- **MO3D v1 baseline:** per-axis quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
-- **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, mapped to unsigned integers with zigzag coding, encoded as varints, then compressed with zlib.
+- **MO3D v1 baseline:** quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
+- **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, zigzag-coded, varint-encoded, then compressed with zlib.
+- **MO3D v3 tangent:** an unweighted parallelogram geometry predictor with residuals expressed in a local orthonormal frame.
+- **MO3D v4 weighted tangent:** a valence-informed weighted parallelogram predictor with residuals expressed in the same kind of local frame. The weights approximate local triangle angles from vertex valences and combine them with the known base-triangle angles, following the idea of published weighted-parallelogram research.
 
-The separate format version prevents an older v1 decoder from interpreting Prithvi residual bytes as absolute coordinates. The current decoder reads both v1 baseline and v2 Prithvi streams.
+The weighted predictor uses the form
+
+\[
+\hat v_O=w_1v_L+w_2v_R+(1-w_1-w_2)v_B
+\]
+
+with angle-derived weights inspired by the referenced research. This is a research adaptation, not an exact reproduction of the 2024 paper's full implementation. MO3D retains all earlier decoders and uses a different magic signature for each format version.
+
+**Adaptive option:** `--method auto` tests the four coders under source, BFS, and Morton orderings and returns the shortest resulting bitstream. This is a rate-first search over 12 candidates, so encoding can be much slower; it is useful when file size matters more than encode time. All tangent modes use a scalar residual step chosen so their theoretical Euclidean rounding bound matches the baseline's conservative quantization bound, while measured distortion is still recorded separately.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -92,15 +104,17 @@ python -m middleout3d generate-fixtures --out samples
 # Run the first benchmark; JSON and CSV reports are written
 python -m middleout3d benchmark samples --out results/baseline.json --bits 16 --repeats 5
 
-# Encode a mesh with the Prithvi predictor
+# Encode with the Prithvi predictor, preserving source order
 python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid.mo3d --bits 16 --method prithvi
 
-# Compare vertex ordering strategies in the benchmark; output includes source, BFS and Morton
-python -m middleout3d benchmark samples --out results/ordering-study.json --bits 16 --repeats 5
+# Encode with weighted tangent prediction and breadth-first ordering
+python -m middleout3d encode samples/icosphere.obj --out results/icosphere-weighted.mo3d --bits 16 --method weighted_tangent --ordering bfs
 
-# To encode explicitly with breadth-first order or spatial Morton order:
-python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-bfs.mo3d --bits 16 --method prithvi --ordering bfs
-python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-morton.mo3d --bits 16 --method prithvi --ordering morton
+# Search all four coders and all three orderings, retaining the smallest bitstream
+python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-auto.mo3d --bits 16 --method auto
+
+# Benchmark all candidates; reports include source, BFS, Morton, and adaptive winners
+python -m middleout3d benchmark samples --out results/ordering-study.json --bits 16 --repeats 5
 
 # Decode to a standard mesh file
 python -m middleout3d decode results/icosphere.mo3d --out results/icosphere-restored.obj
@@ -115,8 +129,11 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 
 - `gzip_lossless_bytes`: gzip result for the original file bytes, including original formatting and any attributes in that file.
 - `mo3d_lossy_geometry_bytes`: absolute-coordinate baseline size containing only geometry and triangle topology.
-- `prithvi_bytes` and `prithvi_size_reduction_vs_mo3d_baseline_pct`: predictor-coded size and size difference relative to the baseline at the same position precision.
-- `prithvi_geometry_max_vertex_error`: maximum vertex-position error after decoding the Prithvi stream.
+- `prithvi_bytes`, `tangent_bytes`, and `weighted_tangent_bytes`: total coder sizes for each ordering.
+- `*_size_reduction_vs_baseline_pct`: size difference relative to the absolute baseline under the same ordering.
+- `*_geometry_max_vertex_error` and `*_geometry_rmse_vertex_distance`: measured distortion for each coder.
+- `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the measured coder/ordering combinations for that mesh.
+- `adaptive_encode_sweep_estimate_ms`: sum of the per-candidate median encode times, a rough estimate of the work an exhaustive adaptive search requires.
 - `mo3d_source_to_encoded_ratio`: included as a rough exploratory signal only; **it is not a fair codec comparison**, because MO3D is lossy and drops attributes.
 - `geometry_max_vertex_error` / `geometry_rmse_vertex_distance`: distortion between corresponding source vertices and reconstructed vertices.
 - `topology_exact`: verifies triangle index connectivity is unchanged.
@@ -126,7 +143,7 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 ## GitHub Actions
 
 - **Tests** run on pushes, pull requests, and manual dispatch across Python 3.10, 3.12, and 3.13. The workflow runs unit tests and CLI encode/decode smoke tests.
-- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline vs Prithvi under source, BFS and Morton orderings, prints per-mesh/per-ordering results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
+- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline, Prithvi, tangent, and weighted-tangent coders under source, BFS, and Morton orderings. It checks topology and the tangent error bounds, prints per-mesh results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
 
 ## Research roadmap
 
