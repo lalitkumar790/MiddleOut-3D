@@ -42,7 +42,7 @@ with angle-derived weights inspired by the referenced research. This is a resear
 
 Piṅgala's *Chandaḥśāstra* is a historical source for combinatorial procedures that list and index metrical patterns and count patterns by the number of short syllables; Jayant Shah surveys the methods and their debated historical interpretations in [A History of Piṅgala's Combinatorics](https://sanskrit.uohyd.ac.in/Algorithms_in_Ancient_India/Material/Pingala.pdf). We borrow the *pattern-enumeration* idea as a modern coding hypothesis.
 
-For a block of (n) residual symbols, let the non-zero positions be (S=\{s_0<s_1<\ldots<s_{k-1}\}). MO3D v6 ranks the position set with the combinatorial number system:
+For a block of `n` residual symbols, let the non-zero positions be `S = {s_0 < s_1 < ... < s_(k-1)}`. MO3D v6 ranks the position set with the combinatorial number system:
 
 \[
 \operatorname{rank}(S)=\sum_{j=0}^{k-1}\binom{s_j}{j+1}
