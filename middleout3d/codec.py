@@ -25,10 +25,11 @@ MAGIC_V3 = b"MO3D\x03"
 MAGIC_V4 = b"MO3D\x04"
 MAGIC_V5 = b"MO3D\x05"
 MAGIC_V6 = b"MO3D\x06"
+MAGIC_V7 = b"MO3D\x07"
 MAGIC = MAGIC_V1  # backward-compatible name for the original v1 signature
 MAX_HEADER_BYTES = 1_000_000
 MAX_ITEMS = 100_000_000
-CODEC_METHODS = ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent")
+CODEC_METHODS = ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent")
 METHODS = CODEC_METHODS + ("auto",)
 
 
@@ -175,6 +176,97 @@ def _decode_chandas_sparse_signed(data: bytes, expected_count: int) -> list[int]
     if cursor != len(data):
         raise CodecError("unexpected trailing bytes in Chandas sparse residuals")
     return out
+
+
+def _encode_chandas_sparse_block(values: list[int]) -> bytes:
+    """Encode one fixed-length block by ranking its non-zero positions."""
+    positions = [index for index, value in enumerate(values) if value != 0]
+    count = len(positions)
+    out = bytearray(_encode_varint(count))
+    possible_patterns = math.comb(len(values), count)
+    rank = _combination_rank_colex(positions)
+    rank_bytes = ((possible_patterns - 1).bit_length() + 7) // 8
+    if rank_bytes:
+        out.extend(rank.to_bytes(rank_bytes, "big"))
+    for position in positions:
+        out.extend(_encode_varint(_zigzag_encode(int(values[position]))))
+    return bytes(out)
+
+
+def _decode_chandas_sparse_block(data: bytes, cursor: int, block_len: int) -> tuple[list[int], int]:
+    """Decode one ranked non-zero-position block; return values and new cursor."""
+    count, cursor = _read_varint(data, cursor)
+    if count > block_len:
+        raise CodecError("Chandas non-zero count exceeds block length")
+    possible_patterns = math.comb(block_len, count)
+    rank_bytes = ((possible_patterns - 1).bit_length() + 7) // 8
+    if cursor + rank_bytes > len(data):
+        raise CodecError("truncated Chandas subset rank")
+    rank = int.from_bytes(data[cursor:cursor + rank_bytes], "big") if rank_bytes else 0
+    cursor += rank_bytes
+    if rank >= possible_patterns:
+        raise CodecError("Chandas subset rank is outside its range")
+    positions = _combination_unrank_colex(rank, block_len, count)
+    block = [0] * block_len
+    for position in positions:
+        value, cursor = _read_varint(data, cursor)
+        block[position] = _zigzag_decode(value)
+    return block, cursor
+
+
+def _encode_chandas_adaptive_residuals(values: list[int]) -> bytes:
+    """Choose raw varints or sparse enumerative coding independently per block."""
+    out = bytearray()
+    for start in range(0, len(values), CHANDAS_BLOCK_SIZE):
+        block = values[start:start + CHANDAS_BLOCK_SIZE]
+        direct = bytearray()
+        for value in block:
+            direct.extend(_encode_varint(_zigzag_encode(int(value))))
+        sparse = _encode_chandas_sparse_block(block)
+        if len(sparse) < len(direct):
+            out.append(1)
+            out.extend(sparse)
+        else:
+            out.append(0)
+            out.extend(direct)
+    return bytes(out)
+
+
+def _decode_chandas_adaptive_residuals(
+    data: bytes, cursor: int, expected_count: int
+) -> tuple[list[int], int]:
+    """Decode a mixed stream of direct-varint and enumeratively coded blocks."""
+    out: list[int] = []
+    while len(out) < expected_count:
+        block_len = min(CHANDAS_BLOCK_SIZE, expected_count - len(out))
+        if cursor >= len(data):
+            raise CodecError("truncated Chandas adaptive block stream")
+        mode = data[cursor]
+        cursor += 1
+        if mode == 0:
+            block = []
+            for _ in range(block_len):
+                value, cursor = _read_varint(data, cursor)
+                block.append(_zigzag_decode(value))
+        elif mode == 1:
+            block, cursor = _decode_chandas_sparse_block(data, cursor, block_len)
+        else:
+            raise CodecError("unknown Chandas block coding mode")
+        out.extend(block)
+    return out, cursor
+
+
+def _encode_chandas_adaptive_stream(seed_values: list[int], residual_values: list[int]) -> bytes:
+    """Separate absolute seeds from residuals and use a locally adaptive block coder."""
+    if len(seed_values) % 3:
+        raise CodecError("seed coordinate stream must contain complete XYZ triples")
+    out = bytearray(b"CHS2")
+    out.extend(_encode_varint(len(seed_values) // 3))
+    for value in seed_values:
+        out.extend(_encode_varint(int(value)))
+    out.extend(_encode_varint(len(residual_values)))
+    out.extend(_encode_chandas_adaptive_residuals(residual_values))
+    return bytes(out)
 
 
 def _zigzag_encode(value: int) -> int:
@@ -598,7 +690,7 @@ def _encode_tangent_coordinates(
     vertices: np.ndarray, quantized: np.ndarray, mins: np.ndarray, maxs: np.ndarray,
     faces: np.ndarray, bits: int, level: int, weighted: bool = False,
     normal_fine: bool = False, normal_step_ratio: float = 0.5,
-    sparse_mode: bool = False
+    sparse_mode: bool = False, adaptive_sparse_mode: bool = False
 ) -> tuple[bytes, float | np.ndarray, int]:
     """Encode locally framed parallelogram-prediction residuals as signed varints.
 
@@ -625,13 +717,17 @@ def _encode_tangent_coordinates(
     reconstructed = np.empty_like(vertices, dtype=np.float64)
     raw = bytearray()
     sparse_values: list[int] = []
+    adaptive_seed_values: list[int] = []
+    adaptive_residual_values: list[int] = []
     predicted_count = 0
     for i, stencil in enumerate(stencils):
         if stencil is None:
             q = quantized[i]
             reconstructed[i] = mins + (q.astype(np.float64) / levels) * spans
             for value in q:
-                if sparse_mode:
+                if adaptive_sparse_mode:
+                    adaptive_seed_values.append(int(value))
+                elif sparse_mode:
                     sparse_values.append(int(value))
                 else:
                     raw.extend(_encode_varint(int(value)))
@@ -646,13 +742,20 @@ def _encode_tangent_coordinates(
         local_residual = frame.T @ (vertices[i] - prediction)
         residual_codes = np.rint(local_residual / steps).astype(np.int64)
         for value in residual_codes:
-            if sparse_mode:
+            if adaptive_sparse_mode:
+                adaptive_residual_values.append(int(value))
+            elif sparse_mode:
                 sparse_values.append(int(value))
             else:
                 raw.extend(_encode_varint(_zigzag_encode(int(value))))
         reconstructed[i] = prediction + frame @ (residual_codes.astype(np.float64) * steps)
         predicted_count += 1
-    raw_payload = _encode_chandas_sparse_signed(sparse_values) if sparse_mode else bytes(raw)
+    if adaptive_sparse_mode:
+        raw_payload = _encode_chandas_adaptive_stream(adaptive_seed_values, adaptive_residual_values)
+    elif sparse_mode:
+        raw_payload = _encode_chandas_sparse_signed(sparse_values)
+    else:
+        raw_payload = bytes(raw)
     return zlib.compress(raw_payload, level), step, predicted_count
 
 
@@ -695,6 +798,59 @@ def _decode_tangent_coordinates(
             dtype=np.float64,
         )
         reconstructed[i] = prediction + frame @ (residual_codes * steps)
+    return reconstructed
+
+
+def _decode_chandas_adaptive_tangent_coordinates(
+    coord_raw: bytes, faces: np.ndarray, vertex_count: int, bits: int,
+    mins: np.ndarray, maxs: np.ndarray, step: float
+) -> np.ndarray:
+    """Decode MO3D v7: absolute seed coordinates + locally adaptive residual blocks."""
+    if not coord_raw.startswith(b"CHS2"):
+        raise CodecError("invalid Chandas adaptive tangent signature")
+    cursor = 4
+    stencils = _parallelogram_stencils(faces, vertex_count)
+    seed_indices = [index for index, stencil in enumerate(stencils) if stencil is None]
+    seed_count, cursor = _read_varint(coord_raw, cursor)
+    if seed_count != len(seed_indices):
+        raise CodecError("Chandas seed count does not match the mesh connectivity")
+    levels = (1 << bits) - 1
+    spans = maxs - mins
+    reconstructed = np.empty((vertex_count, 3), dtype=np.float64)
+    for index in seed_indices:
+        q = []
+        for _axis in range(3):
+            value, cursor = _read_varint(coord_raw, cursor)
+            if value > levels:
+                raise CodecError("Chandas seed coordinate is outside quantization range")
+            q.append(value)
+        reconstructed[index] = mins + (np.asarray(q, dtype=np.float64) / levels) * spans
+
+    residual_count, cursor = _read_varint(coord_raw, cursor)
+    expected_residual_count = (vertex_count - seed_count) * 3
+    if residual_count != expected_residual_count:
+        raise CodecError("Chandas residual count does not match predictive vertex count")
+    residual_values, cursor = _decode_chandas_adaptive_residuals(
+        coord_raw, cursor, expected_residual_count
+    )
+    if cursor != len(coord_raw):
+        raise CodecError("unexpected trailing bytes in Chandas adaptive stream")
+
+    valences = _vertex_valences(faces, vertex_count)
+    residual_cursor = 0
+    steps = np.full(3, step, dtype=np.float64)
+    for index, stencil in enumerate(stencils):
+        if stencil is None:
+            continue
+        left_i, right_i, base_i = stencil
+        left, right, base = reconstructed[left_i], reconstructed[right_i], reconstructed[base_i]
+        prediction = _weighted_parallelogram_prediction(
+            left, right, base, left_i, right_i, index, valences
+        )
+        frame = _local_tangent_frame(left, right, base, prediction)
+        residual_codes = np.asarray(residual_values[residual_cursor:residual_cursor + 3], dtype=np.float64)
+        residual_cursor += 3
+        reconstructed[index] = prediction + frame @ (residual_codes * steps)
     return reconstructed
 
 
@@ -764,16 +920,19 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
     if method == "prithvi":
         coord_stream = _encode_prithvi_coordinates(quantized, faces, level)
         coordinate_coder = "prithvi-mesh-adjacency-residual-varint-zlib"
-    elif method in {"tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent"}:
-        weighted = method in {"weighted_tangent", "normal_fine_tangent", "chandas_tangent"}
+    elif method in {"tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent"}:
+        weighted = method in {"weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent"}
         normal_fine = method == "normal_fine_tangent"
         sparse_mode = method == "chandas_tangent"
+        adaptive_sparse_mode = method == "chandas_adaptive_tangent"
         coord_stream, tangent_step, tangent_predictive_vertices = _encode_tangent_coordinates(
             vertices, quantized, mins, maxs, faces, bits, level,
             weighted=weighted, normal_fine=normal_fine, normal_step_ratio=float(normal_step_ratio),
-            sparse_mode=sparse_mode
+            sparse_mode=sparse_mode, adaptive_sparse_mode=adaptive_sparse_mode
         )
         coordinate_coder = (
+            "chandas-adaptive-weighted-tangent-residual-varint-zlib"
+            if adaptive_sparse_mode else
             "chandas-weighted-tangent-sparse-enumerative-varint-zlib"
             if sparse_mode else
             "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib"
@@ -789,7 +948,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
 
     header = {
         "format": "MO3D",
-        "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6}[method],
+        "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6, "chandas_adaptive_tangent": 7}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
         "vertex_count": int(len(vertices)),
@@ -818,7 +977,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         ),
     }
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4, "normal_fine_tangent": MAGIC_V5, "chandas_tangent": MAGIC_V6}[method]
+    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4, "normal_fine_tangent": MAGIC_V5, "chandas_tangent": MAGIC_V6, "chandas_adaptive_tangent": MAGIC_V7}[method]
     return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
 
 
@@ -831,7 +990,7 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if len(payload) < magic_len + 4:
         raise CodecError("not a supported MO3D bitstream")
     magic = payload[:magic_len]
-    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3, MAGIC_V4, MAGIC_V5, MAGIC_V6):
+    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3, MAGIC_V4, MAGIC_V5, MAGIC_V6, MAGIC_V7):
         raise CodecError("not a supported MO3D bitstream")
     header_len = struct.unpack(">I", payload[magic_len:magic_len + 4])[0]
     start = magic_len + 4
@@ -841,10 +1000,10 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         header = json.loads(payload[start:start + header_len].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CodecError("invalid metadata header") from exc
-    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3, 4, 5, 6):
+    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3, 4, 5, 6, 7):
         raise CodecError("unsupported MO3D format version")
     version = header["version"]
-    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3, MAGIC_V4: 4, MAGIC_V5: 5, MAGIC_V6: 6}[magic]
+    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3, MAGIC_V4: 4, MAGIC_V5: 5, MAGIC_V6: 6, MAGIC_V7: 7}[magic]
     if version != expected_version:
         raise CodecError("MO3D magic and header version do not match")
     bits = header.get("position_bits")
@@ -894,6 +1053,8 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         raise CodecError("MO3D format version 5 requires the normal-fine tangent residual coder")
     if version == 6 and coder != "chandas-weighted-tangent-sparse-enumerative-varint-zlib":
         raise CodecError("MO3D format version 6 requires the Chandas sparse-enumerative tangent coder")
+    if version == 7 and coder != "chandas-adaptive-weighted-tangent-residual-varint-zlib":
+        raise CodecError("MO3D format version 7 requires the adaptive Chandas residual coder")
     if coder == "absolute-fixed-width-zlib":
         dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         expected_coord_bytes = vertex_count * 3 * dtype.itemsize
@@ -906,6 +1067,13 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     elif coder == "prithvi-mesh-adjacency-residual-varint-zlib":
         quantized = _decode_prithvi_coordinates(coord_raw, faces, vertex_count, bits)
         vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
+    elif coder == "chandas-adaptive-weighted-tangent-residual-varint-zlib":
+        step = header.get("tangent_residual_step")
+        if not isinstance(step, (int, float)) or not np.isfinite(step) or step <= 0:
+            raise CodecError("invalid Chandas adaptive tangent residual step")
+        vertices = _decode_chandas_adaptive_tangent_coordinates(
+            coord_raw, faces, vertex_count, bits, mins, maxs, float(step)
+        )
     elif coder in {
         "tangent-parallelogram-residual-varint-zlib",
         "weighted-tangent-parallelogram-residual-varint-zlib",
