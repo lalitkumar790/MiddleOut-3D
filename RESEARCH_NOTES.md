@@ -301,6 +301,14 @@ The first prototype is deliberately restricted to one edge-connected, consistent
 
 The geometry-conditioned rank stream is a modern adaptation of published mesh-compression methods. It is not an algorithm in Piṅgala's *Chandaḥśāstra*, the Śulbasūtras, or Vedānta Deśika's *Citra Paddhati*. Those traditions motivate distinct mathematical experiments; historical attribution stays separate from benchmark evidence.
 
+## Research experiment: local distance-ranked connectivity (MO3D v10)
+
+**Hypothesis:** v9 global rank coding reduced complete synthetic payload size by 32.92%, but its per-gate search remained roughly 50–100× slower than baseline after linear rank/selection. v10 tests whether a spatial index and fixed-size nearest candidate set can retain rate savings with lower runtime.
+
+The encoder uses a cKDTree over dequantized quantized positions. At each predicted gate, it queries K+2 nearest vertices, removes the two gate endpoints, expands the query radius to include distance ties at the cutoff, sorts the local set by (squared distance, vertex ID), and keeps K=32 candidates. It encodes a local rank when the actual opposite vertex is present; otherwise it emits an absolute vertex-ID escape. Boundary code 0 stays reserved. The decoder runs the same nearest query and interprets symbols 1..K as local ranks, larger symbols as escapes. The new DRC2 stream uses MO3D v10; v9 DRC1 semantics and v1–v8 decoding remain unchanged.
+
+This is a modern adaptation, not a reproduction of published distance-ranked or priority-based codecs. SciPy is imported lazily and required only by v10; other methods run without it. The benchmark compares full payload size, connectivity size, encoding and decoding medians, maximum error, RMSE, and winding-preserving topology at equal 16-bit precision over six synthetic meshes and source/BFS/Morton vertex orderings. It records wins against baseline and global ranking. If escapes erase savings or spatial queries do not materially improve runtime, the candidate should be rejected or redesigned.
+
 ## Next research target: rank-coded mesh connectivity
 
 The face experiment indicates a more promising next step is to change the *representation* of connectivity, not simply reorder its flat index stream. EdgeBreaker/CLERS, valence-driven encoding, and distance-ranked connectivity provide published baselines. In particular, distance-ranked methods choose among candidate vertices using geometric prediction and encode a small rank instead of a full vertex index.

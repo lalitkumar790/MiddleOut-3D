@@ -64,9 +64,12 @@ jobs:
               print(
                   f"CASE | {row['mesh']} | {row['vertex_ordering']} | "
                   f"baseline={row['baseline']['bytes']} B | "
-                  f"ranked={row['distance_ranked']['bytes']} B | "
-                  f"delta={row['size_reduction_vs_baseline_pct']}% | "
-                  f"rank_encode={row['distance_ranked']['encode_median_ms']} ms"
+                  f"global={row['distance_ranked']['bytes']} B "
+                  f"({row['size_reduction_vs_baseline_pct']}%) | "
+                  f"local={row['local_distance_ranked']['bytes']} B "
+                  f"({row['local_size_reduction_vs_baseline_pct']}%) | "
+                  f"encode-ms global/local={row['distance_ranked']['encode_median_ms']}/"
+                  f"{row['local_distance_ranked']['encode_median_ms']}"
               )
           for error in report["errors"]:
               print(f"UNSUPPORTED | {error['file']} | {error['ordering']} | {error['error']}")
@@ -79,7 +82,7 @@ jobs:
               handle.write("- Configuration: six deterministic synthetic fixtures, 16-bit positions, source/BFS/Morton vertex orderings, and three encode/decode timing repetitions.\n")
               handle.write("- Paired summary: " + "; ".join(f"{key}={value}" for key, value in summary.items()) + ".\n")
               handle.write("- Unsupported mesh/order cases: " + (json.dumps(report["errors"], sort_keys=True) if report["errors"] else "none") + ".\n")
-              handle.write("- The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics per paired case. A positive result is limited to this synthetic corpus and does not imply Draco superiority.\n")
+              handle.write("- The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics for baseline, global rank and local rank. A positive result is limited to this synthetic corpus and does not imply Draco superiority.\n")
 
           PY
           git config user.name "github-actions[bot]"

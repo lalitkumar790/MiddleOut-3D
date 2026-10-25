@@ -55,3 +55,8 @@ E001 shows a promising 32.9206% aggregate size reduction on the six synthetic fi
 - Paired summary: paired_cases=18; baseline_total_bytes=193365; distance_ranked_total_bytes=129708; size_reduction_pct=32.9206; wins=13; ties=0; losses=5; mean_baseline_connectivity_bytes=3811.7222; mean_ranked_connectivity_bytes=82.2778; all_topology_exact=True; all_error_budgets_met=True.
 - Unsupported mesh/order cases: none.
 - The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics per paired case. A positive result is limited to this synthetic corpus and does not imply Draco superiority.
+
+
+## E003 — local candidate-set experiment (MO3D v10)
+
+v9 globally ranked every vertex at each triangle gate. It reduced complete synthetic payload bytes by 32.9206%, but remained tens of times slower than baseline. v10 is a separate version using a cKDTree to form a deterministic K=32 nearest-candidate list. When the new vertex is outside the local set, an absolute-ID escape preserves exact topology. It changes connectivity coding only; geometry and quantization error remain unchanged. SciPy is imported lazily for v10. Full-payload measurements and tests decide whether it is worth keeping.

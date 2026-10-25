@@ -28,11 +28,12 @@ MAGIC_V5 = b"MO3D\x05"
 MAGIC_V6 = b"MO3D\x06"
 MAGIC_V7 = b"MO3D\x07"
 MAGIC_V9 = b"MO3D\x09"
+MAGIC_V10 = b"MO3D\x0a"
 MAGIC = MAGIC_V1  # backward-compatible name for the original v1 signature
 MAX_HEADER_BYTES = 1_000_000
 MAX_ITEMS = 100_000_000
 CODEC_METHODS = ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent")
-METHODS = CODEC_METHODS + ("distance_ranked_connectivity", "auto")
+METHODS = CODEC_METHODS + ("distance_ranked_connectivity", "distance_ranked_local_connectivity", "auto")
 
 
 class CodecError(ValueError):
@@ -982,6 +983,209 @@ def _decode_distance_ranked_connectivity(
     _distance_ranked_edge_incidence(decoded)
     return decoded
 
+LOCAL_DISTANCE_RANKED_CANDIDATE_COUNT = 32
+
+
+def _build_distance_ranked_tree(vertices: np.ndarray) -> Any:
+    """Build the optional cKDTree used by local distance-ranked coding."""
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError as exc:
+        raise CodecError(
+            "distance_ranked_local_connectivity requires scipy>=1.10; install with 'pip install scipy'"
+        ) from exc
+    return cKDTree(np.asarray(vertices, dtype=np.float64), compact_nodes=True, balanced_tree=True)
+
+
+def _distance_ranked_local_candidates(
+    vertices: np.ndarray,
+    tree: Any,
+    u: int,
+    v: int,
+    prediction: np.ndarray,
+    candidate_count: int = LOCAL_DISTANCE_RANKED_CANDIDATE_COUNT,
+) -> np.ndarray:
+    """Return K nearest candidates after removing edge endpoints, with stable ties."""
+    n_vertices = len(vertices)
+    target_count = min(candidate_count, max(0, n_vertices - 2))
+    if target_count == 0:
+        return np.empty(0, dtype=np.int64)
+
+    query_count = min(n_vertices, target_count + 2)
+    distances, _ = tree.query(prediction, k=query_count, workers=1)
+    distances = np.atleast_1d(np.asarray(distances, dtype=np.float64))
+    finite = distances[np.isfinite(distances)]
+    if finite.size == 0:
+        raise CodecError("spatial index returned no finite distance candidates")
+    cutoff = float(finite.max())
+    tolerance = np.finfo(np.float64).eps * max(1.0, abs(cutoff)) * 16.0
+    near_ids = np.asarray(
+        tree.query_ball_point(prediction, r=cutoff + tolerance, workers=1),
+        dtype=np.int64,
+    )
+    candidate_ids = near_ids[(near_ids != u) & (near_ids != v)]
+    if len(candidate_ids) < target_count:
+        all_ids = np.arange(n_vertices, dtype=np.int64)
+        candidate_ids = all_ids[(all_ids != u) & (all_ids != v)]
+    offsets = vertices[candidate_ids] - prediction
+    squared_distance = np.einsum("ij,ij->i", offsets, offsets)
+    order = np.lexsort((candidate_ids, squared_distance))
+    return candidate_ids[order[:target_count]]
+
+
+def _encode_distance_ranked_local_connectivity(
+    vertices: np.ndarray, faces: np.ndarray, level: int = 6,
+    candidate_count: int = LOCAL_DISTANCE_RANKED_CANDIDATE_COUNT
+) -> bytes:
+    """Encode connected oriented manifold topology using geometry-ranked third vertices.
+
+    The first triangle is written as three vertex IDs. Each later gate edge emits
+    0 for a boundary edge, or (distance-rank + 1) for the adjacent triangle's
+    closing vertex. Edges with two decoded incident triangles need no symbol.
+    Prediction is p[u] + p[v] - p[w], where w is the current triangle's opposite
+    vertex. The complete DRC2 symbol stream is zlib-compressed.
+    """
+    faces = np.asarray(faces, dtype=np.int64)
+    vertices = np.asarray(vertices, dtype=np.float64)
+    if faces.ndim != 2 or faces.shape[1] != 3 or len(faces) < 1:
+        raise CodecError("distance-ranked connectivity requires at least one triangle")
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) < 3:
+        raise CodecError("distance-ranked connectivity requires at least three vertices")
+    edge_faces = _distance_ranked_edge_incidence(faces)
+    tree = _build_distance_ranked_tree(vertices)
+
+    out = bytearray(b"DRC2")
+    seed = tuple(int(value) for value in faces[0])
+    for vertex_id in seed:
+        out.extend(_encode_varint(vertex_id))
+
+    emitted_faces = {0}
+    edge_counts: dict[tuple[int, int], int] = {}
+    closed_boundary_edges: set[tuple[int, int]] = set()
+    queue: deque[tuple[int, int, int, int]] = deque()
+
+    def add_face(triangle: tuple[int, int, int], face_index: int) -> None:
+        a, b, c = triangle
+        for u, v, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            edge = (u, v) if u < v else (v, u)
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+            queue.append((u, v, opposite, face_index))
+
+    add_face(seed, 0)
+    while len(emitted_faces) < len(faces):
+        added_face = False
+        while queue:
+            u, v, opposite, current_face = queue.popleft()
+            edge = (u, v) if u < v else (v, u)
+            if edge_counts.get(edge, 0) >= 2 or edge in closed_boundary_edges:
+                continue
+            incidences = edge_faces[edge]
+            if len(incidences) == 1:
+                out.extend(_encode_varint(0))
+                closed_boundary_edges.add(edge)
+                continue
+
+            neighbors = [
+                incidence for incidence in incidences
+                if incidence[0] != current_face and incidence[0] not in emitted_faces
+            ]
+            if len(neighbors) != 1:
+                raise CodecError("invalid traversal state for a manifold edge")
+            neighbor_face, neighbor_u, neighbor_v, target = neighbors[0]
+            if neighbor_u != v or neighbor_v != u:
+                raise CodecError("inconsistent adjacent-face orientation")
+            prediction = vertices[u] + vertices[v] - vertices[opposite]
+            candidates = _distance_ranked_local_candidates(
+                vertices, tree, u, v, prediction, candidate_count
+            )
+            matches = np.flatnonzero(candidates == target)
+            if len(matches):
+                code = int(matches[0]) + 1
+            else:
+                # Absolute vertex-ID escape when the target is outside K.
+                code = len(candidates) + 1 + target
+            out.extend(_encode_varint(code))
+            emitted_faces.add(neighbor_face)
+            add_face((v, u, target), neighbor_face)
+            added_face = True
+            break
+        if not added_face:
+            raise CodecError("edge traversal ended before all connected faces were encoded")
+    return zlib.compress(bytes(out), level)
+
+
+def _decode_distance_ranked_local_connectivity(
+    data: bytes, vertices: np.ndarray, face_count: int,
+    candidate_count: int = LOCAL_DISTANCE_RANKED_CANDIDATE_COUNT
+) -> np.ndarray:
+    """Decode a DRC2 stream using the same deterministic gate-edge traversal."""
+    if not data.startswith(b"DRC2"):
+        raise CodecError("invalid distance-ranked connectivity signature")
+    vertices = np.asarray(vertices, dtype=np.float64)
+    tree = _build_distance_ranked_tree(vertices)
+    cursor = 4
+    seed_values: list[int] = []
+    for _ in range(3):
+        vertex_id, cursor = _read_varint(data, cursor)
+        if vertex_id >= len(vertices):
+            raise CodecError("seed triangle vertex is out of range")
+        seed_values.append(vertex_id)
+    seed = tuple(seed_values)
+    if len(set(seed)) != 3:
+        raise CodecError("degenerate seed triangle in distance-ranked connectivity stream")
+
+    faces: list[tuple[int, int, int]] = [seed]  # type: ignore[list-item]
+    seen_faces = {tuple(sorted(seed))}
+    edge_counts: dict[tuple[int, int], int] = {}
+    closed_boundary_edges: set[tuple[int, int]] = set()
+    queue: deque[tuple[int, int, int]] = deque()
+
+    def add_face(triangle: tuple[int, int, int]) -> None:
+        a, b, c = triangle
+        for u, v, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            edge = (u, v) if u < v else (v, u)
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+            queue.append((u, v, opposite))
+
+    add_face(seed)
+    while len(faces) < face_count:
+        expanded = False
+        while queue:
+            u, v, opposite = queue.popleft()
+            edge = (u, v) if u < v else (v, u)
+            if edge_counts.get(edge, 0) >= 2 or edge in closed_boundary_edges:
+                continue
+            code, cursor = _read_varint(data, cursor)
+            if code == 0:
+                closed_boundary_edges.add(edge)
+                continue
+            prediction = vertices[u] + vertices[v] - vertices[opposite]
+            candidates = _distance_ranked_local_candidates(
+                vertices, tree, u, v, prediction, candidate_count
+            )
+            if code <= len(candidates):
+                target = int(candidates[code - 1])
+            else:
+                target = code - len(candidates) - 1
+                if target < 0 or target >= len(vertices) or target in (u, v):
+                    raise CodecError("invalid distance-ranked escape vertex ID")
+            triangle = (v, u, target)
+            face_key = tuple(sorted(triangle))
+            if face_key in seen_faces:
+                raise CodecError("duplicate triangle reconstructed from distance-ranked stream")
+            seen_faces.add(face_key)
+            faces.append(triangle)
+            add_face(triangle)
+            expanded = True
+            break
+        if not expanded:
+            raise CodecError("distance-ranked stream ended before all faces were reconstructed")
+    if cursor != len(data):
+        raise CodecError("unexpected trailing data in distance-ranked connectivity stream")
+    decoded = np.asarray(faces, dtype=np.int64)
+    _distance_ranked_edge_incidence(decoded)
+    return decoded
+
 def _encode_prithvi_coordinates(quantized: np.ndarray, faces: np.ndarray, level: int) -> bytes:
     """Encode quantized coordinate residuals against earlier adjacent vertices."""
     parents = _mesh_parents(faces, len(quantized))
@@ -1369,8 +1573,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
     if not isinstance(normal_step_ratio, (int, float)) or isinstance(normal_step_ratio, bool) or not np.isfinite(normal_step_ratio) or not 0.0 < normal_step_ratio <= 1.0:
         raise CodecError("normal_step_ratio must be in the interval (0, 1]")
-    if method == "distance_ranked_connectivity" and face_ordering != "source":
-        raise CodecError("distance_ranked_connectivity uses its own deterministic face traversal; face_ordering must be 'source'")
+    if method in {"distance_ranked_connectivity", "distance_ranked_local_connectivity"} and face_ordering != "source":
+        raise CodecError(f"{method} uses its own deterministic face traversal; face_ordering must be 'source'")
     if face_ordering == "auto" and method != "auto":
         candidates = [
             (
@@ -1453,19 +1657,20 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         coord_dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         coord_stream = zlib.compress(quantized.astype(coord_dtype).tobytes(order="C"), level)
         coordinate_coder = "absolute-fixed-width-zlib"
-    if method == "distance_ranked_connectivity":
-        # The decoder must know geometry before recovering ranked connectivity.
-        # Rank using exactly the dequantized points reconstructed from the absolute
-        # coordinate stream to avoid encoder/decoder tie-order disagreement.
+    if method in {"distance_ranked_connectivity", "distance_ranked_local_connectivity"}:
+        # Geometry must be reconstructed before ranking so encoder and decoder agree.
         ranking_vertices = mins + (quantized.astype(np.float64) / ((1 << bits) - 1)) * (maxs - mins)
-        face_stream = _encode_distance_ranked_connectivity(ranking_vertices, faces, level)
+        if method == "distance_ranked_connectivity":
+            face_stream = _encode_distance_ranked_connectivity(ranking_vertices, faces, level)
+        else:
+            face_stream = _encode_distance_ranked_local_connectivity(ranking_vertices, faces, level)
     else:
         faces_for_stream = _reorder_faces_for_stream(vertices, faces, face_ordering)
         face_stream = _encode_face_stream(faces_for_stream, level)
 
     header = {
         "format": "MO3D",
-        "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6, "chandas_adaptive_tangent": 7, "distance_ranked_connectivity": 9}[method],
+        "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6, "chandas_adaptive_tangent": 7, "distance_ranked_connectivity": 9, "distance_ranked_local_connectivity": 10}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
         "vertex_count": int(len(vertices)),
@@ -1481,6 +1686,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "coordinate_coder": coordinate_coder,
         "position_quantization": "uniform per axis, bounding-box normalized",
         "topology": (
+            "distance-ranked local predictive connectivity, DRC2, 32 nearest geometry candidates with absolute-ID escapes; connected consistently oriented 2-manifold triangles"
+            if method == "distance_ranked_local_connectivity" else
             "distance-ranked predictive connectivity, DRC1, zlib; connected consistently oriented 2-manifold triangles"
             if method == "distance_ranked_connectivity" else
             "triangles, delta indices with zigzag varints, zlib"
@@ -1494,6 +1701,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
             if method == "weighted_tangent" else
             "Research-inspired parallelogram predictor with local tangent-frame residuals."
             if method == "tangent" else
+            "Local distance-ranked topology coder with spatial index and absolute-ID escapes; modern adaptation, not a claim to reproduce the published algorithm."
+            if method == "distance_ranked_local_connectivity" else
             "Geometry-conditioned distance-ranked topology coder; adaptation only, not a claim to reproduce the published algorithm."
             if method == "distance_ranked_connectivity" else
             "Baseline absolute-coordinate coder."
@@ -1503,10 +1712,13 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
     # necessary only when the optional face traversal changes the face stream.
     if method == "distance_ranked_connectivity":
         header["connectivity_coder"] = "distance-ranked-connectivity-v1"
+    elif method == "distance_ranked_local_connectivity":
+        header["connectivity_coder"] = "distance-ranked-local-connectivity-v1"
+        header["rank_candidate_count"] = LOCAL_DISTANCE_RANKED_CANDIDATE_COUNT
     elif face_ordering != "source":
         header["face_ordering"] = face_ordering
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4, "normal_fine_tangent": MAGIC_V5, "chandas_tangent": MAGIC_V6, "chandas_adaptive_tangent": MAGIC_V7, "distance_ranked_connectivity": MAGIC_V9}[method]
+    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4, "normal_fine_tangent": MAGIC_V5, "chandas_tangent": MAGIC_V6, "chandas_adaptive_tangent": MAGIC_V7, "distance_ranked_connectivity": MAGIC_V9, "distance_ranked_local_connectivity": MAGIC_V10}[method]
     return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
 
 
@@ -1519,7 +1731,7 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if len(payload) < magic_len + 4:
         raise CodecError("not a supported MO3D bitstream")
     magic = payload[:magic_len]
-    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3, MAGIC_V4, MAGIC_V5, MAGIC_V6, MAGIC_V7, MAGIC_V9):
+    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3, MAGIC_V4, MAGIC_V5, MAGIC_V6, MAGIC_V7, MAGIC_V9, MAGIC_V10):
         raise CodecError("not a supported MO3D bitstream")
     header_len = struct.unpack(">I", payload[magic_len:magic_len + 4])[0]
     start = magic_len + 4
@@ -1529,10 +1741,10 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         header = json.loads(payload[start:start + header_len].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CodecError("invalid metadata header") from exc
-    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3, 4, 5, 6, 7, 9):
+    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3, 4, 5, 6, 7, 9, 10):
         raise CodecError("unsupported MO3D format version")
     version = header["version"]
-    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3, MAGIC_V4: 4, MAGIC_V5: 5, MAGIC_V6: 6, MAGIC_V7: 7, MAGIC_V9: 9}[magic]
+    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3, MAGIC_V4: 4, MAGIC_V5: 5, MAGIC_V6: 6, MAGIC_V7: 7, MAGIC_V9: 9, MAGIC_V10: 10}[magic]
     if version != expected_version:
         raise CodecError("MO3D magic and header version do not match")
     bits = header.get("position_bits")
@@ -1564,6 +1776,13 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         if connectivity_coder != "distance-ranked-connectivity-v1":
             raise CodecError("MO3D format version 9 requires the distance-ranked connectivity coder")
         faces = None
+    elif version == 10:
+        if connectivity_coder != "distance-ranked-local-connectivity-v1":
+            raise CodecError("MO3D format version 10 requires the local distance-ranked connectivity coder")
+        rank_candidate_count = header.get("rank_candidate_count")
+        if not isinstance(rank_candidate_count, int) or isinstance(rank_candidate_count, bool) or not 1 <= rank_candidate_count <= 256:
+            raise CodecError("invalid local distance-rank candidate count")
+        faces = None
     else:
         faces = _decode_face_stream(face_raw, vertex_count, face_count)
     levels = (1 << bits) - 1
@@ -1576,8 +1795,8 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         raise CodecError("invalid bounding box metadata")
 
     coder = header.get("coordinate_coder", "absolute-fixed-width-zlib")
-    if version == 9 and coder != "absolute-fixed-width-zlib":
-        raise CodecError("MO3D format version 9 requires the independent absolute-geometry coder")
+    if version in (9, 10) and coder != "absolute-fixed-width-zlib":
+        raise CodecError(f"MO3D format version {version} requires the independent absolute-geometry coder")
     if version == 1 and coder != "absolute-fixed-width-zlib":
         raise CodecError("non-baseline coordinate coding requires MO3D format version 2 or higher")
     if version == 2 and coder != "prithvi-mesh-adjacency-residual-varint-zlib":
@@ -1639,6 +1858,11 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         raise CodecError(f"unsupported coordinate coder: {coder!r}")
     if version == 9:
         faces = _decode_distance_ranked_connectivity(face_raw, vertices, face_count)
+    elif version == 10:
+        faces = _decode_distance_ranked_local_connectivity(
+            face_raw, vertices, face_count,
+            candidate_count=header["rank_candidate_count"],
+        )
     return vertices, faces, header
 
 

@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import struct
 import unittest
@@ -354,6 +355,47 @@ class CodecTests(unittest.TestCase):
                     bound = np.linalg.norm(spans / (2 * ((1 << 16) - 1)))
                     self.assertLessEqual(float(errors.max()), bound * 1.0001 + 1e-12)
 
+    @unittest.skipUnless(importlib.util.find_spec("scipy") is not None, "optional scipy dependency is not installed")
+    def test_distance_ranked_local_connectivity_roundtrip_and_escape_path(self):
+        cases = [
+            (self.vertices, self.faces),
+            (
+                np.asarray(
+                    [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [100., 100., 100.]]
+                    + [
+                        [(index % 10) * 0.01, 1.0 + (index // 10) * 0.01, (index % 3) * 0.01]
+                        for index in range(40)
+                    ],
+                    dtype=np.float64,
+                ),
+                np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+            ),
+        ]
+
+        def canonical_oriented(faces):
+            normalized = []
+            for a, b, c in np.asarray(faces, dtype=np.int64):
+                normalized.append(min(
+                    (int(a), int(b), int(c)),
+                    (int(b), int(c), int(a)),
+                    (int(c), int(a), int(b)),
+                ))
+            return sorted(normalized)
+
+        for vertices, faces in cases:
+            with self.subTest(vertices=len(vertices), faces=len(faces)):
+                payload = encode_mesh(vertices, faces, bits=16, method="distance_ranked_local_connectivity")
+                decoded_vertices, decoded_faces, header = decode_mesh(payload)
+                self.assertEqual(header["version"], 10)
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 10]))
+                self.assertEqual(header["connectivity_coder"], "distance-ranked-local-connectivity-v1")
+                self.assertEqual(header["rank_candidate_count"], 32)
+                self.assertEqual(canonical_oriented(decoded_faces), canonical_oriented(faces))
+                errors = np.linalg.norm(decoded_vertices - vertices, axis=1)
+                spans = vertices.max(axis=0) - vertices.min(axis=0)
+                bound = np.linalg.norm(spans / (2 * ((1 << 16) - 1)))
+                self.assertLessEqual(float(errors.max()), bound * 1.0001 + 1e-12)
+
     def test_distance_ranked_connectivity_rejects_unsupported_topologies(self):
         vertices = np.asarray([
             [0., 0., 0.], [1., 0., 0.], [0., 1., 0.],
@@ -373,6 +415,11 @@ class CodecTests(unittest.TestCase):
             encode_mesh(
                 self.vertices, self.faces,
                 method="distance_ranked_connectivity", face_ordering="rotate",
+            )
+        with self.assertRaises(CodecError):
+            encode_mesh(
+                self.vertices, self.faces,
+                method="distance_ranked_local_connectivity", face_ordering="rotate",
             )
 
     def test_auto_mode_selects_smallest_valid_error_budget_candidate(self):

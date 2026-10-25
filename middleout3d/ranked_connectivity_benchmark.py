@@ -92,6 +92,9 @@ def _compare_one(
     ranked = _benchmark_candidate(
         vertices, faces, bits, repeats, "distance_ranked_connectivity", ordering
     )
+    local_ranked = _benchmark_candidate(
+        vertices, faces, bits, repeats, "distance_ranked_local_connectivity", ordering
+    )
     return {
         "mesh": path.name,
         "source_file_bytes": path.stat().st_size,
@@ -102,6 +105,7 @@ def _compare_one(
         "vertex_ordering": ordering,
         "baseline": baseline,
         "distance_ranked": ranked,
+        "local_distance_ranked": local_ranked,
         "size_reduction_vs_baseline_pct": round(
             (1 - ranked["bytes"] / baseline["bytes"]) * 100, 4
         ) if baseline["bytes"] else None,
@@ -109,6 +113,12 @@ def _compare_one(
             (1 - ranked["connectivity_stream_bytes"] / baseline["connectivity_stream_bytes"]) * 100,
             4,
         ) if baseline["connectivity_stream_bytes"] else None,
+        "local_size_reduction_vs_baseline_pct": round(
+            (1 - local_ranked["bytes"] / baseline["bytes"]) * 100, 4
+        ) if baseline["bytes"] else None,
+        "local_size_reduction_vs_global_ranked_pct": round(
+            (1 - local_ranked["bytes"] / ranked["bytes"]) * 100, 4
+        ) if ranked["bytes"] else None,
     }
 
 
@@ -160,9 +170,16 @@ def benchmark_ranked_connectivity_directory(
 
     baseline_bytes = sum(row["baseline"]["bytes"] for row in results)
     ranked_bytes = sum(row["distance_ranked"]["bytes"] for row in results)
+    local_ranked_bytes = sum(row["local_distance_ranked"]["bytes"] for row in results)
     wins = sum(row["distance_ranked"]["bytes"] < row["baseline"]["bytes"] for row in results)
     ties = sum(row["distance_ranked"]["bytes"] == row["baseline"]["bytes"] for row in results)
     losses = len(results) - wins - ties
+    local_wins = sum(row["local_distance_ranked"]["bytes"] < row["baseline"]["bytes"] for row in results)
+    local_ties = sum(row["local_distance_ranked"]["bytes"] == row["baseline"]["bytes"] for row in results)
+    local_losses = len(results) - local_wins - local_ties
+    local_wins_vs_ranked = sum(row["local_distance_ranked"]["bytes"] < row["distance_ranked"]["bytes"] for row in results)
+    local_ties_vs_ranked = sum(row["local_distance_ranked"]["bytes"] == row["distance_ranked"]["bytes"] for row in results)
+    local_losses_vs_ranked = len(results) - local_wins_vs_ranked - local_ties_vs_ranked
     report = {
         "project": "MiddleOut-3D",
         "experiment": "baseline connectivity vs geometry-conditioned distance-ranked connectivity",
@@ -180,33 +197,47 @@ def benchmark_ranked_connectivity_directory(
             "vertex_orderings": ["source", "bfs", "morton"],
             "timing_statistic": "median wall-clock time via perf_counter",
             "warmup": "not explicitly separated",
-            "rank_candidate_set": "all vertex IDs except the current gate-edge endpoints",
+            "rank_candidate_set": "global: all vertex IDs except gate endpoints; local: 32 nearest candidates with absolute-ID escape",
             "rank_tie_break": "squared Euclidean distance, then vertex ID",
         },
         "summary": {
             "paired_cases": len(results),
             "baseline_total_bytes": baseline_bytes,
             "distance_ranked_total_bytes": ranked_bytes,
+            "local_distance_ranked_total_bytes": local_ranked_bytes,
             "size_reduction_pct": round((1 - ranked_bytes / baseline_bytes) * 100, 4) if baseline_bytes else None,
+            "local_size_reduction_pct": round((1 - local_ranked_bytes / baseline_bytes) * 100, 4) if baseline_bytes else None,
+            "local_vs_global_ranked_reduction_pct": round((1 - local_ranked_bytes / ranked_bytes) * 100, 4) if ranked_bytes else None,
             "wins": wins,
             "ties": ties,
             "losses": losses,
+            "local_wins_vs_baseline": local_wins,
+            "local_ties_vs_baseline": local_ties,
+            "local_losses_vs_baseline": local_losses,
+            "local_wins_vs_global_ranked": local_wins_vs_ranked,
+            "local_ties_vs_global_ranked": local_ties_vs_ranked,
+            "local_losses_vs_global_ranked": local_losses_vs_ranked,
             "mean_baseline_connectivity_bytes": round(statistics.mean(r["baseline"]["connectivity_stream_bytes"] for r in results), 4),
             "mean_ranked_connectivity_bytes": round(statistics.mean(r["distance_ranked"]["connectivity_stream_bytes"] for r in results), 4),
             "all_topology_exact": all(
-                r["baseline"]["topology_exact"] and r["distance_ranked"]["topology_exact"]
+                r["baseline"]["topology_exact"]
+                and r["distance_ranked"]["topology_exact"]
+                and r["local_distance_ranked"]["topology_exact"]
                 for r in results
             ),
             "all_error_budgets_met": all(
-                r["baseline"]["error_budget_met"] and r["distance_ranked"]["error_budget_met"]
+                r["baseline"]["error_budget_met"]
+                and r["distance_ranked"]["error_budget_met"]
+                and r["local_distance_ranked"]["error_budget_met"]
                 for r in results
             ),
         },
         "results": results,
         "errors": errors,
         "interpretation_note": (
-            "Distance-ranked connectivity is a simple research adaptation, not a reproduction "
-            "of the published algorithm. Compression is compared on complete MO3D payloads at "
+            "Global and local distance-ranked connectivity are research adaptations, not reproductions "
+            "of the published algorithms. The local variant searches 32 nearby candidates and uses "
+            "absolute-ID escapes when needed. Compression is compared on complete MO3D payloads at "
             "the same fixed position precision; unsupported topology is recorded in errors."
         ),
     }
@@ -218,20 +249,20 @@ def benchmark_ranked_connectivity_directory(
     columns = [
         "mesh", "vertices", "triangles", "vertex_ordering", "position_bits",
         "baseline_bytes", "distance_ranked_bytes", "size_reduction_vs_baseline_pct",
-        "baseline_connectivity_bytes", "distance_ranked_connectivity_bytes",
+        "baseline_connectivity_bytes", "distance_ranked_connectivity_bytes", "local_distance_ranked_connectivity_bytes",
         "connectivity_reduction_vs_baseline_pct",
-        "baseline_encode_median_ms", "distance_ranked_encode_median_ms",
-        "baseline_decode_median_ms", "distance_ranked_decode_median_ms",
-        "baseline_max_vertex_error", "distance_ranked_max_vertex_error",
-        "baseline_rmse_vertex_distance", "distance_ranked_rmse_vertex_distance",
-        "baseline_topology_exact", "distance_ranked_topology_exact",
-        "baseline_error_budget_met", "distance_ranked_error_budget_met",
+        "baseline_encode_median_ms", "distance_ranked_encode_median_ms", "local_distance_ranked_encode_median_ms",
+        "baseline_decode_median_ms", "distance_ranked_decode_median_ms", "local_distance_ranked_decode_median_ms",
+        "baseline_max_vertex_error", "distance_ranked_max_vertex_error", "local_distance_ranked_max_vertex_error",
+        "baseline_rmse_vertex_distance", "distance_ranked_rmse_vertex_distance", "local_distance_ranked_rmse_vertex_distance",
+        "baseline_topology_exact", "distance_ranked_topology_exact", "local_distance_ranked_topology_exact",
+        "baseline_error_budget_met", "distance_ranked_error_budget_met", "local_distance_ranked_error_budget_met",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for row in results:
-            b, r = row["baseline"], row["distance_ranked"]
+            b, r, lr = row["baseline"], row["distance_ranked"], row["local_distance_ranked"]
             writer.writerow({
                 "mesh": row["mesh"], "vertices": row["vertices"], "triangles": row["triangles"],
                 "vertex_ordering": row["vertex_ordering"], "position_bits": bits,
@@ -239,19 +270,26 @@ def benchmark_ranked_connectivity_directory(
                 "size_reduction_vs_baseline_pct": row["size_reduction_vs_baseline_pct"],
                 "baseline_connectivity_bytes": b["connectivity_stream_bytes"],
                 "distance_ranked_connectivity_bytes": r["connectivity_stream_bytes"],
+                "local_distance_ranked_connectivity_bytes": lr["connectivity_stream_bytes"],
                 "connectivity_reduction_vs_baseline_pct": row["connectivity_reduction_vs_baseline_pct"],
                 "baseline_encode_median_ms": b["encode_median_ms"],
                 "distance_ranked_encode_median_ms": r["encode_median_ms"],
+                "local_distance_ranked_encode_median_ms": lr["encode_median_ms"],
                 "baseline_decode_median_ms": b["decode_median_ms"],
                 "distance_ranked_decode_median_ms": r["decode_median_ms"],
+                "local_distance_ranked_decode_median_ms": lr["decode_median_ms"],
                 "baseline_max_vertex_error": b["max_vertex_error"],
                 "distance_ranked_max_vertex_error": r["max_vertex_error"],
+                "local_distance_ranked_max_vertex_error": lr["max_vertex_error"],
                 "baseline_rmse_vertex_distance": b["rmse_vertex_distance"],
                 "distance_ranked_rmse_vertex_distance": r["rmse_vertex_distance"],
+                "local_distance_ranked_rmse_vertex_distance": lr["rmse_vertex_distance"],
                 "baseline_topology_exact": b["topology_exact"],
                 "distance_ranked_topology_exact": r["topology_exact"],
+                "local_distance_ranked_topology_exact": lr["topology_exact"],
                 "baseline_error_budget_met": b["error_budget_met"],
                 "distance_ranked_error_budget_met": r["error_budget_met"],
+                "local_distance_ranked_error_budget_met": lr["error_budget_met"],
             })
     return {
         "report": str(output_json),
