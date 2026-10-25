@@ -187,13 +187,22 @@ class CodecTests(unittest.TestCase):
         candidates = [
             encode_mesh(self.vertices, self.faces, bits=bits, method=method, ordering=ordering)
             for ordering in ("source", "bfs", "morton")
-            for method in ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent")
+            for method in ("baseline", "prithvi", "tangent", "weighted_tangent")
+        ] + [
+            encode_mesh(
+                self.vertices, self.faces, bits=bits, method="normal_fine_tangent",
+                ordering=ordering, normal_step_ratio=ratio
+            )
+            for ordering in ("source", "bfs", "morton")
+            for ratio in (0.375, 0.5, 0.625, 0.75, 0.875)
         ]
         automatic = encode_mesh(self.vertices, self.faces, bits=bits, method="auto")
         vertices, faces, header = decode_mesh(automatic)
         self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
         self.assertTrue(np.array_equal(faces.shape, np.asarray(self.faces.shape)))
-        self.assertEqual(header["vertex_ordering"] in ("source", "bfs", "morton"), True)
+        self.assertIn(header["vertex_ordering"], ("source", "bfs", "morton"))
+        if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
+            self.assertIn(header["normal_step_ratio"], (0.375, 0.5, 0.625, 0.75, 0.875))
         self.assertIn(
             header["coordinate_coder"],
             (
