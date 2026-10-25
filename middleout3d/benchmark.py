@@ -78,11 +78,16 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
     gzip_bytes, gzip_seconds = _timed(lambda: gzip.compress(original, compresslevel=6, mtime=0), repeats)
     reference_bytes, reference_seconds = _timed(lambda: _simple_geometry_zlib_reference(vertices, faces, bits), repeats)
     reference_decoded, reference_decode_seconds = _timed(lambda: _decode_simple_geometry_zlib_reference(reference_bytes), repeats)
-    mo3d_bytes, encode_seconds = _timed(lambda: encode_mesh(vertices, faces, bits=bits), repeats)
+    mo3d_bytes, encode_seconds = _timed(lambda: encode_mesh(vertices, faces, bits=bits, method="baseline"), repeats)
     decoded, decode_seconds = _timed(lambda: decode_mesh(mo3d_bytes), repeats)
     decoded_vertices, decoded_faces, meta = decoded
+    prithvi_bytes, prithvi_encode_seconds = _timed(lambda: encode_mesh(vertices, faces, bits=bits, method="prithvi"), repeats)
+    prithvi_decoded, prithvi_decode_seconds = _timed(lambda: decode_mesh(prithvi_bytes), repeats)
+    prithvi_vertices, prithvi_faces, prithvi_meta = prithvi_decoded
     errors = np.linalg.norm(decoded_vertices - vertices, axis=1)
+    prithvi_errors = np.linalg.norm(prithvi_vertices - vertices, axis=1)
     topology_equal = bool(np.array_equal(decoded_faces, faces))
+    prithvi_topology_equal = bool(np.array_equal(prithvi_faces, faces))
     diagonal = float(np.linalg.norm(vertices.max(axis=0) - vertices.min(axis=0)))
     per_axis_half_step = (np.asarray(vertices.max(axis=0)) - np.asarray(vertices.min(axis=0))) / (2 * ((1 << bits) - 1))
     theoretical_error_bound = float(np.linalg.norm(per_axis_half_step))
@@ -104,8 +109,17 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "mo3d_lossy_geometry_bytes": mo3d_size,
         "mo3d_source_to_encoded_ratio": round(len(original) / mo3d_size, 6) if mo3d_size else None,
         "mo3d_size_saved_vs_source_pct": round((1 - mo3d_size / len(original)) * 100, 4) if original else None,
+        "mo3d_coordinate_coder": meta.get("coordinate_coder", "absolute-fixed-width-zlib"),
         "mo3d_encode_median_ms": round(encode_seconds * 1000, 4),
         "mo3d_decode_median_ms": round(decode_seconds * 1000, 4),
+        "prithvi_bytes": len(prithvi_bytes),
+        "prithvi_size_reduction_vs_mo3d_baseline_pct": round((1 - len(prithvi_bytes) / len(mo3d_bytes)) * 100, 4) if mo3d_bytes else None,
+        "prithvi_encode_median_ms": round(prithvi_encode_seconds * 1000, 4),
+        "prithvi_decode_median_ms": round(prithvi_decode_seconds * 1000, 4),
+        "prithvi_geometry_max_vertex_error": float(prithvi_errors.max()) if prithvi_errors.size else 0.0,
+        "prithvi_geometry_rmse_vertex_distance": float(np.sqrt(np.mean(prithvi_errors ** 2))) if prithvi_errors.size else 0.0,
+        "prithvi_topology_exact": prithvi_topology_equal,
+        "prithvi_coordinate_coder": prithvi_meta.get("coordinate_coder", ""),
         "geometry_max_vertex_error": float(errors.max()) if errors.size else 0.0,
         "geometry_rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
         "bbox_diagonal": diagonal,
@@ -115,6 +129,8 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "attributes_dropped": ["normals", "UVs", "colors", "textures", "materials", "source-format metadata"],
         "fair_comparison_warning": "The simple geometry zlib reference and MO3D both encode quantized positions at the same configured precision and triangle connectivity, omitting the same attributes, so their size comparison is a useful narrow ablation. Both are lossy relative to source geometry. The source-file ratio is not a fair codec comparison because source files may include formatting and attributes. gzip is lossless on the exact source bytes. Compare against Draco with matched attributes and distortion settings before broader claims.",
         "decoder_bytes_exact": bool(len(decoded_vertices) == len(vertices) and topology_equal),
+        "prithvi_decoder_bytes_exact": bool(len(prithvi_vertices) == len(vertices) and prithvi_topology_equal),
+        "baseline_prithvi_quantized_positions_equal": bool(np.array_equal(prithvi_vertices, decoded_vertices)),
         "header_version": meta["version"],
     }
 
