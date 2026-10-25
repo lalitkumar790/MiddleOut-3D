@@ -4,9 +4,9 @@
 
 ## Automated CI validation
 
-- **Unit tests:** 18 tests cover Python 3.10, 3.12, and 3.13 in the [latest test run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40169914630).
+- **Unit tests:** 18 tests cover Python 3.10, 3.12, and 3.13 in the [latest test run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40171463185).
 - **CLI smoke tests:** baseline, weighted tangent + BFS, normal-fine tangent + BFS, and adaptive encode/decode commands are exercised on generated mesh fixtures.
-- **Research-coder benchmark:** the benchmark now compares baseline, Prithvi, tangent, weighted tangent, normal-fine tangent, and Google Draco under source, BFS and Morton orderings. See the [current GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions).
+- **Research-coder benchmark:** the benchmark compares baseline, Prithvi, tangent, weighted tangent, normal-fine tangent, and Google Draco under source, BFS and Morton orderings. The normal-fine method tests five normal-step ratios and reports error in the local normal and tangent directions. See the [current GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions).
 
 ## What the tests cover
 
