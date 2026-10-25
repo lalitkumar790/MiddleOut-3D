@@ -310,6 +310,8 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
+FACE_ORDERINGS = ("source", "bfs")
+AUTO_FACE_ORDERINGS = ("source",)
 # Predictive cost-guided traversal remains available experimentally, but the first
 # benchmark found it consistently larger and much slower than source/BFS. Keep
 # the user-facing rate-first auto search on the three proven orderings until a
@@ -418,6 +420,8 @@ def vertex_order_for_mesh(vertices: Any, faces: Any, ordering: str = "source") -
     vertices, faces = _validate_mesh(vertices, faces)
     if ordering not in ORDERINGS:
         raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
+    if face_ordering not in FACE_ORDERINGS:
+        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
     count = len(vertices)
     if ordering == "source":
         return np.arange(count, dtype=np.int64)
@@ -574,6 +578,85 @@ def _encode_face_stream(faces: np.ndarray, level: int) -> bytes:
         face_delta_stream.extend(_encode_varint(_zigzag_encode(current - previous)))
         previous = current
     return zlib.compress(bytes(face_delta_stream), level)
+
+
+def _reorder_faces_for_stream(
+    vertices: np.ndarray, faces: np.ndarray, face_ordering: str = "source"
+) -> np.ndarray:
+    """Reorder triangle rows and cyclic starts to reduce index-delta cost.
+
+    The BFS option walks the triangle dual graph (faces are neighbors when they
+    share an edge). During the walk, each face is cyclically rotated—never
+    reversed—to minimize signed-varint cost relative to the previous index.
+    This preserves winding and the represented surface, but intentionally does
+    not preserve original face IDs/order. It is a simple connectivity-stream
+    experiment, not a replacement for EdgeBreaker or valence coding.
+    """
+    if face_ordering not in FACE_ORDERINGS:
+        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
+    if face_ordering == "source":
+        return np.asarray(faces, dtype=np.int64)
+
+    face_count = len(faces)
+    if face_count < 2:
+        return np.asarray(faces, dtype=np.int64)
+    edge_faces: dict[tuple[int, int], list[int]] = {}
+    for face_index, tri in enumerate(faces):
+        a, b, c = (int(x) for x in tri)
+        for u, v in ((a, b), (b, c), (c, a)):
+            if u == v:
+                continue
+            edge = (u, v) if u < v else (v, u)
+            edge_faces.setdefault(edge, []).append(face_index)
+
+    adjacent = [set() for _ in range(face_count)]
+    for incident in edge_faces.values():
+        unique = sorted(set(incident))
+        for index, left in enumerate(unique):
+            for right in unique[index + 1:]:
+                adjacent[left].add(right)
+                adjacent[right].add(left)
+
+    areas = np.zeros(face_count, dtype=np.float64)
+    for face_index, tri in enumerate(faces):
+        a, b, c = (int(x) for x in tri)
+        areas[face_index] = float(np.linalg.norm(np.cross(vertices[b] - vertices[a], vertices[c] - vertices[a])))
+
+    visited = np.zeros(face_count, dtype=bool)
+    traversal: list[int] = []
+    from collections import deque
+    while len(traversal) < face_count:
+        unseen = np.flatnonzero(~visited)
+        if unseen.size == 0:
+            break
+        # Largest-area face is a stable seed; original face index breaks ties.
+        seed = max((int(i) for i in unseen), key=lambda i: (areas[i], -i))
+        queue = deque([seed])
+        visited[seed] = True
+        while queue:
+            face_index = queue.popleft()
+            traversal.append(face_index)
+            for neighbor in sorted(adjacent[face_index]):
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+
+    reordered: list[tuple[int, int, int]] = []
+    previous = 0
+    for face_index in traversal:
+        a, b, c = (int(x) for x in faces[face_index])
+        rotations = ((a, b, c), (b, c, a), (c, a, b))
+        def delta_cost(tri: tuple[int, int, int]) -> int:
+            total = 0
+            last = previous
+            for value in tri:
+                total += len(_encode_varint(_zigzag_encode(value - last)))
+                last = value
+            return total
+        chosen = min(enumerate(rotations), key=lambda item: (delta_cost(item[1]), item[0]))[1]
+        reordered.append(chosen)
+        previous = chosen[-1]
+    return np.asarray(reordered, dtype=np.int64)
 
 
 def _decode_face_stream(face_raw: bytes, vertex_count: int, face_count: int) -> np.ndarray:
@@ -946,7 +1029,7 @@ def _decode_chandas_adaptive_tangent_coordinates(
     return reconstructed
 
 
-def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5) -> bytes:
+def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5, face_ordering: str = "source") -> bytes:
     """Encode a triangle mesh as MO3D bytes.
 
     Args:
@@ -957,8 +1040,9 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         method: "baseline", "prithvi", "parallelogram", or "auto". The
             parallelogram mode averages causal neighboring-face parallelogram
             predictions; auto selects the smallest resulting bitstream.
-        ordering: "source", "bfs", or "morton" controls vertex traversal order.
-            Faces are reindexed to preserve the represented surface.
+        ordering: "source", "bfs", "morton", or "predictive" controls vertex order.
+        face_ordering: "source" preserves face row order; "bfs" traverses the
+            triangle dual graph and optimizes cyclic starts for index-delta coding.
 
     Geometry is lossy because coordinates are quantized. Normals, UVs, colors,
     textures, material data and source-format metadata are omitted.
@@ -1036,13 +1120,15 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         coord_dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         coord_stream = zlib.compress(quantized.astype(coord_dtype).tobytes(order="C"), level)
         coordinate_coder = "absolute-fixed-width-zlib"
-    face_stream = _encode_face_stream(faces, level)
+    faces_for_stream = _reorder_faces_for_stream(vertices, faces, face_ordering)
+    face_stream = _encode_face_stream(faces_for_stream, level)
 
     header = {
         "format": "MO3D",
         "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6, "chandas_adaptive_tangent": 7}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
+        "face_ordering": face_ordering,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
         "bounds_min": mins.tolist(),
@@ -1206,9 +1292,9 @@ def load_mesh(path: str | Path) -> tuple[np.ndarray, np.ndarray, Any]:
     return vertices, faces, loaded
 
 
-def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5) -> dict[str, Any]:
+def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5, face_ordering: str = "source") -> dict[str, Any]:
     vertices, faces, _ = load_mesh(input_path)
-    encoded = encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering, normal_step_ratio=normal_step_ratio)
+    encoded = encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering, normal_step_ratio=normal_step_ratio, face_ordering=face_ordering)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(encoded)
@@ -1230,7 +1316,7 @@ def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16,
     return {"input": str(input_path), "output": str(output_path), "input_bytes": Path(input_path).stat().st_size,
             "output_bytes": len(encoded), "ratio": Path(input_path).stat().st_size / len(encoded),
             "position_bits": bits, "requested_method": method, "method": actual_method, "ordering": actual_ordering,
-            "normal_step_ratio": actual_normal_step_ratio,
+            "normal_step_ratio": actual_normal_step_ratio, "face_ordering": encoded_metadata.get("face_ordering", "source"),
             "vertices": len(vertices), "faces": len(faces)}
 
 
