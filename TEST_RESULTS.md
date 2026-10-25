@@ -17,8 +17,9 @@
 - Source, breadth-first (BFS), and Morton orderings each produce a valid vertex-index permutation with consistently remapped face indices.
 - Baseline and Prithvi both round-trip correctly under all three orderings, including topology restoration after mapping back to source indexing.
 - Tangent, weighted-tangent and normal-fine tangent streams round-trip under all three orderings and remain within the baseline's conservative Euclidean quantization-error bound on the test fixture.
-- The normal-fine local-frame steps give the normal component half the base step while preserving the same sum of squared step sizes as the equal-step variant.
-- Adaptive mode returns the smallest bitstream among all five in-house coders and three orderings tested for a mesh.
+- The normal-fine local-frame quantizer tests the steps ratios 0.375, 0.5, 0.625, 0.75, and 0.875; each candidate preserves the same sum of squared step sizes as the equal-step variant.
+- Benchmark metrics include local normal-component RMSE, tangential-component RMSE, and the selected ratio. The benchmark chooses the smallest ratio candidate within the baseline's maximum-error budget.
+- Adaptive mode returns the smallest bitstream among the four ordinary coders and five normal-step ratios under all three orderings tested for a mesh (up to 27 candidate streams).
 - Unsupported methods and bit depths, corrupt bitstreams, zero-extent tangent meshes, and invalid version combinations are rejected.
 
 ## First research-inspired codec results
