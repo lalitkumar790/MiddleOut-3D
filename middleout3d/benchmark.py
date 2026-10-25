@@ -5,6 +5,7 @@ import csv
 import gzip
 import json
 import platform
+from importlib.metadata import PackageNotFoundError, version
 import statistics
 import struct
 import sys
@@ -400,14 +401,18 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
             errors.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
     if not rows:
         raise RuntimeError("No files could be benchmarked; see input errors")
+    try:
+        dracopy_version = version("DracoPy")
+    except PackageNotFoundError:
+        dracopy_version = None
     report = {
         "project": "MiddleOut-3D",
-        "report_version": 2,
+        "report_version": 3,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
-        "configuration": {"position_bits": bits, "repeats": repeats, "methods": list(CODEC_METHODS), "vertex_orderings": list(ORDERINGS), "external_baseline": "Google Draco via DracoPy, same nominal quantization_bits as the MO3D position_bits setting, compression_level=7", "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
+        "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__, "dracopy": dracopy_version},
+        "configuration": {"position_bits": bits, "repeats": repeats, "methods": list(CODEC_METHODS), "vertex_orderings": list(ORDERINGS), "external_baseline": {"codec": "Google Draco via DracoPy", "dracopy_version": dracopy_version, "quantization_bits": bits, "compression_level": 7, "preserve_order": True, "distortion_note": "same nominal quantization bits, but actual distortion is measured and may differ from MO3D"}, "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
         "results": rows, "errors": errors,
-        "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements. Tangent methods target the baseline's conservative geometric error bound. Auto selection chooses the shortest observed candidate bitstream across all tested methods and orderings, at increased encoding cost.",
+        "conclusion_policy": "The Draco comparison uses the same nominal position quantization bits but still requires rate-distortion interpretation because actual error and attribute treatment differ. MO3D is geometry-only, lossy, and omits non-geometry attributes. This benchmark cannot establish superiority over Draco unless data, attributes, distortion and evaluation protocol are equivalent. Tangent methods target the baseline's conservative geometric error bound. Auto selection compares only MO3D's four coders and three orderings, not Draco."
     }
     output_json = Path(output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
