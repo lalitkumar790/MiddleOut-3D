@@ -99,7 +99,7 @@ The v5 header stores the three local-frame steps and the chosen normal-step rati
 
 ### Adaptive size selection
 
-The \`auto\` encoder tests all four available coders under source, BFS, and Morton traversal and emits the shortest serialized candidate. This makes the output no larger than any tested candidate for a given mesh and parameter setting, but requires up to 12 encodes. It is a rate-first option, not a fast default. It also does not prove superiority to Draco because the test candidates are our own methods and the current assets are geometry-only.
+The `auto` encoder tests all four available coders under source, BFS, and Morton traversal and emits the shortest serialized candidate. This makes the output no larger than any tested candidate for a given mesh and parameter setting, but requires up to 12 encodes. It is a rate-first option, not a fast default. It also does not prove superiority to Draco because the test candidates are our own methods and the current assets are geometry-only.
 
 ## Evaluation questions
 
@@ -149,7 +149,7 @@ The relevant design principle is **enumerate a pattern by its rank, then recover
 
 ### Implemented hypothesis
 
-MO3D v6 \`chandas_tangent\` combines the weighted tangent-space predictor with sparse enumerative coding of its integer stream:
+MO3D v6 `chandas_tangent` combines the weighted tangent-space predictor with sparse enumerative coding of its integer stream:
 
 1. The encoder predicts a vertex using a causal weighted-parallelogram stencil, expresses the residual in a local orthonormal frame, and quantizes it at the established conservative error budget.
 2. Seed vertices contribute quantized absolute coordinate symbols; predicted vertices contribute signed residual symbols.
@@ -176,7 +176,7 @@ Vaněček, Hácha and Váša (GRAPP 2024), *A Predictor for Triangle Mesh Compre
 - Compare v6 against v4 weighted tangent at identical quantization/order and compare both against Draco at a matched maximum-error target.
 - Require exact topology reconstruction and a bounded geometric error for every mesh/order/method candidate.
 - Record per-mesh bytes and encode/decode times; aggregate results must not hide regressions on small or irregular meshes.
-- Keep \`auto\` size-first selection separate from a fast single-method encode path, because evaluating many candidates adds encoding overhead.
+- Keep `auto` size-first selection separate from a fast single-method encode path, because evaluating many candidates adds encoding overhead.
 - Use public, representative CAD, scanned-object and robotics meshes before making claims beyond the synthetic fixtures.
 
 
@@ -222,7 +222,7 @@ The *Citra Paddhati* in *Pādukā Sahasram* is described in a Tirumala Tirupati 
 
 ## New experiment: predictive-cost-guided vertex ordering
 
-The original source/BFS/Morton experiment suggests the order in which a mesh is traversed can materially change residual and connectivity streams. The new \`predictive\` ordering is a greedy, encoder-side heuristic:
+The original source/BFS/Morton experiment suggests the order in which a mesh is traversed can materially change residual and connectivity streams. The new `predictive` ordering is a greedy, encoder-side heuristic:
 
 1. Start from a deterministic large-area seed triangle (fallbacks handle unreferenced vertices and disconnected pieces).
 2. Maintain vertices whose candidate triangle stencils become available as earlier neighbors are visited.
@@ -267,6 +267,39 @@ The full-payload comparison is archived in [JSON](results/face_connectivity_stud
 - All topology and error-budget checks passed. The bytes are from six synthetic fixtures; the timing used a single repetition without separate warmup.
 
 Current implementation exposes face_ordering=source|rotate|bfs|auto. Explicit auto evaluates all three complete payloads and chooses the shortest. method=auto also uses the adaptive face strategy for every candidate. This avoids hard-coding the BFS traversal that performed poorly.
+
+## Research experiment: geometry-conditioned distance-ranked connectivity (MO3D v9)
+
+**Branch:** `research/distance-ranked-connectivity`  
+**Status:** implementation and tests submitted to CI; complete-payload benchmark pending.
+
+### Published method and scope of this adaptation
+
+Marais, Gain and Shreiner (2007) describe a separate connectivity encoder for connected 2-manifold triangle meshes with boundary. It traverses mesh edges, predicts a triangle's closing vertex using global geometry, ranks candidates by Euclidean distance to the prediction, and codes the rank rather than a full connectivity index. Their paper reports gains on more regular triangulations, while warning that highly irregular and sliver-heavy meshes can underperform valence-driven schemes ([Eurographics Digital Library paper record](https://diglib.eg.org/items/57a65691-acc2-4d79-bdb4-0a53bf1d8011)). Dvořák et al. (2023) further study priority-based gates selected for confident geometric predictions ([Eurographics Digital Library](https://diglib.eg.org/items/2b0e5b8d-8052-4fc0-b70f-4d28da9a0598)). Draco's format also implements EdgeBreaker and valence EdgeBreaker connectivity, so an eventual comparison must separate topology-only and complete-bitstream rates ([official Draco bitstream specification](https://google.github.io/draco/spec/)).
+
+This prototype does **not** claim to reproduce either published encoder. It uses a simple edge-queue traversal, the parallelogram prediction \(p_u+p_v-p_w\), and ranks the actual third vertex among *all* vertex IDs excluding the two gate endpoints. This deliberately simple choice is easy to decode deterministically but might spend more bits than a carefully designed eligibility set. It emits rank+1 for interior edges and zero for boundary edges; an edge already incident to two reconstructed faces is inferred closed and consumes no symbol. The first triangle's three vertex IDs seed the traversal.
+
+### Dependency and bitstream
+
+The distance rank is computed on the reconstructed, quantized absolute coordinates, not full-precision input coordinates. That is required because both encoder and decoder must produce the same ranking when quantization changes near ties. To avoid a dependency cycle, MO3D v9 uses the independent fixed-width absolute geometry stream first, then decodes topology using `DRC1` plus the quantized-coordinate ranking. Version 9 has a new `MO3D\\x09` signature; v1–v7 decoders are unchanged on this branch, and this method is not included in `auto`.
+
+For an edge oriented \(u\to v\) whose current face has opposite vertex \(w\), set \(\hat p=p_u+p_v-p_w\). Let \(C_{u,v}\) be all vertex IDs except \(u,v\), ordered by the total key \((\lVert p_i-\hat p\rVert_2^2,i)\). For the neighboring face's actual closing vertex \(x\), encode
+\[
+s = 1 + \operatorname{rank}_{C_{u,v}}(x).
+\]
+The decoder chooses \(x=C_{u,v}[s-1]\) and creates the orientation-consistent triangle \((v,u,x)\). A symbol \(s=0\) marks a boundary gate. Each edge is inserted into the queue in a deterministic order; shared edge counts decide when a gate is already closed.
+
+The first prototype is deliberately restricted to one edge-connected, consistently oriented 2-manifold triangle component (boundary edges allowed). Degenerate/duplicate faces, edges incident to more than two faces, inconsistent winding and disconnected face components are rejected rather than silently encoded. Ranking costs \(O(V\log V)\) per gate with the current sort; topology traversal is \(O(F)\) apart from ranking, and the method has roughly \(O(FV\log V)\) ranking cost and \(O(F+V)\) live state. The complete payload, not rank-stream bytes alone, determines performance.
+
+### Falsification plan
+
+- Tests exercise a closed sphere and open two-triangle patch, all three vertex orderings, winding-preserving topology equivalence, 16-bit quantization error, invalid nonmanifold/disconnected/inconsistently oriented inputs, and invalid face-order options.
+- The benchmark compares baseline and distance-ranked complete MO3D payload sizes with equal vertex precision on six synthetic fixtures, source/BFS/Morton vertex orderings, and three encode/decode timing repeats. It records geometry bytes, connectivity bytes, full bytes, encoding/decoding medians, maximum vertex error, RMSE, and topology validation.
+- If the rank coder loses on the synthetic corpus or incurs disproportionate time, retain it as a negative-result branch and investigate the published priority-based gate idea or EdgeBreaker-style topology symbols before integrating anything. No result here implies superiority to Draco until an equal-distortion, equal-attribute comparison is conducted.
+
+### Historical framing
+
+The geometry-conditioned rank stream is a modern adaptation of published mesh-compression methods. It is not an algorithm in Piṅgala's *Chandaḥśāstra*, the Śulbasūtras, or Vedānta Deśika's *Citra Paddhati*. Those traditions motivate distinct mathematical experiments; historical attribution stays separate from benchmark evidence.
 
 ## Next research target: rank-coded mesh connectivity
 

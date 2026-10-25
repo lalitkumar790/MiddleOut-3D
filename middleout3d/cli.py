@@ -4,6 +4,7 @@ import json
 
 from .benchmark import benchmark_directory
 from .connectivity_benchmark import benchmark_connectivity_directory
+from .ranked_connectivity_benchmark import benchmark_ranked_connectivity_directory
 from .codec import FACE_ORDERINGS, ORDERINGS, decode_file, encode_file
 from .fixtures import generate_fixtures
 
@@ -17,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     enc.add_argument("input")
     enc.add_argument("--out", required=True)
     enc.add_argument("--bits", type=int, default=16, help="position quantization bits (8-24); lower is smaller but less accurate")
-    enc.add_argument("--method", choices=["baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent", "auto"], default="baseline", help="coder: baseline, Prithvi, tangent predictors, Chandas sparse-pattern or adaptive Chandas tangent coder, or size-optimized auto selection")
+    enc.add_argument("--method", choices=["baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent", "distance_ranked_connectivity", "auto"], default="baseline", help="coder: existing geometry predictors, adaptive Chandas, experimental distance-ranked connectivity (absolute geometry required), or size-optimized auto selection")
     enc.add_argument("--ordering", choices=list(ORDERINGS), default="source", help="vertex ordering: source, breadth-first mesh traversal (bfs), or spatial Morton ordering (morton)")
     enc.add_argument("--face-ordering", choices=list(FACE_ORDERINGS), default="source", help="triangle stream order: source face order or BFS over face adjacency with delta-cost cyclic rotation")
     enc.add_argument("--normal-step-ratio", type=float, default=0.5, help="MO3D v5 only: normal residual step relative to the equal-step budget (0<ratio<=1; smaller means finer normal precision)")
@@ -34,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     conn.add_argument("--out", default="results/connectivity-benchmark.json")
     conn.add_argument("--bits", type=int, default=16)
     conn.add_argument("--repeats", type=int, default=1)
+    ranked = sub.add_parser("benchmark-ranked-connectivity", help="compare baseline index connectivity with the experimental geometry-conditioned distance-rank coder")
+    ranked.add_argument("input_dir", nargs="?", default="samples")
+    ranked.add_argument("--out", default="results/ranked-connectivity.json")
+    ranked.add_argument("--bits", type=int, default=16)
+    ranked.add_argument("--repeats", type=int, default=3)
     return parser
 
 
@@ -51,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(benchmark_directory(args.input_dir, args.out, args.bits, args.repeats), indent=2))
         elif args.command == "benchmark-connectivity":
             print(json.dumps(benchmark_connectivity_directory(args.input_dir, args.out, args.bits, args.repeats), indent=2))
+        elif args.command == "benchmark-ranked-connectivity":
+            print(json.dumps(benchmark_ranked_connectivity_directory(args.input_dir, args.out, args.bits, args.repeats), indent=2))
         return 0
     except Exception as exc:
         print(f"middleout3d: error: {exc}")

@@ -275,6 +275,70 @@ class CodecTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(restored_faces, self.faces))
                 self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
 
+    def test_distance_ranked_connectivity_roundtrip_preserves_oriented_topology(self):
+        # A closed triangulated surface and an open two-triangle patch exercise
+        # interior-gate and boundary-gate symbols.
+        cases = [
+            (self.vertices, self.faces),
+            (
+                np.asarray([[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]]),
+                np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+            ),
+        ]
+
+        def canonical_oriented(faces):
+            normalized = []
+            for a, b, c in np.asarray(faces, dtype=np.int64):
+                normalized.append(min(
+                    (int(a), int(b), int(c)),
+                    (int(b), int(c), int(a)),
+                    (int(c), int(a), int(b)),
+                ))
+            return sorted(normalized)
+
+        for vertices, faces in cases:
+            for ordering in ("source", "bfs", "morton"):
+                with self.subTest(vertices=len(vertices), faces=len(faces), ordering=ordering):
+                    ordered_vertices, ordered_faces, _ = reorder_mesh(vertices, faces, ordering)
+                    payload = encode_mesh(
+                        vertices, faces, bits=16,
+                        method="distance_ranked_connectivity", ordering=ordering,
+                    )
+                    decoded_vertices, decoded_faces, header = decode_mesh(payload)
+                    self.assertEqual(header["version"], 9)
+                    self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 9]))
+                    self.assertEqual(
+                        header["connectivity_coder"], "distance-ranked-connectivity-v1"
+                    )
+                    self.assertEqual(
+                        canonical_oriented(decoded_faces), canonical_oriented(ordered_faces)
+                    )
+                    errors = np.linalg.norm(decoded_vertices - ordered_vertices, axis=1)
+                    spans = ordered_vertices.max(axis=0) - ordered_vertices.min(axis=0)
+                    bound = np.linalg.norm(spans / (2 * ((1 << 16) - 1)))
+                    self.assertLessEqual(float(errors.max()), bound * 1.0001 + 1e-12)
+
+    def test_distance_ranked_connectivity_rejects_unsupported_topologies(self):
+        vertices = np.asarray([
+            [0., 0., 0.], [1., 0., 0.], [0., 1., 0.],
+            [0., -1., 0.], [0., 0., 1.], [3., 0., 0.],
+            [4., 0., 0.], [3., 1., 0.],
+        ])
+        nonmanifold_faces = np.asarray([
+            [0, 1, 2], [1, 0, 3], [0, 1, 4],
+        ], dtype=np.int64)
+        disconnected_faces = np.asarray([[0, 1, 2], [5, 6, 7]], dtype=np.int64)
+        inconsistent_faces = np.asarray([[0, 1, 2], [0, 1, 3]], dtype=np.int64)
+        for faces in (nonmanifold_faces, disconnected_faces, inconsistent_faces):
+            with self.subTest(faces=faces.tolist()):
+                with self.assertRaises(CodecError):
+                    encode_mesh(vertices, faces, method="distance_ranked_connectivity")
+        with self.assertRaises(CodecError):
+            encode_mesh(
+                self.vertices, self.faces,
+                method="distance_ranked_connectivity", face_ordering="rotate",
+            )
+
     def test_auto_mode_selects_smallest_valid_error_budget_candidate(self):
         bits = 16
         levels = (1 << bits) - 1

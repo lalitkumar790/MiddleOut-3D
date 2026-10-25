@@ -42,5 +42,7 @@ jobs:
           python -m middleout3d decode /tmp/icosphere-chandas.mo3d --out /tmp/icosphere-chandas-decoded.obj
           python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere-chandas-adaptive.mo3d --bits 16 --method chandas_adaptive_tangent --ordering bfs
           python -m middleout3d decode /tmp/icosphere-chandas-adaptive.mo3d --out /tmp/icosphere-chandas-adaptive-decoded.obj
+          python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere-distance-ranked.mo3d --bits 16 --method distance_ranked_connectivity
+          python -m middleout3d decode /tmp/icosphere-distance-ranked.mo3d --out /tmp/icosphere-distance-ranked-decoded.obj
           python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere-auto.mo3d --bits 16 --method auto
           python -m middleout3d decode /tmp/icosphere-auto.mo3d --out /tmp/icosphere-auto-decoded.obj
