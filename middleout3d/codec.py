@@ -306,11 +306,19 @@ def _local_tangent_frame(left: np.ndarray, right: np.ndarray, base: np.ndarray,
 
 
 def _tangent_residual_step(mins: np.ndarray, maxs: np.ndarray, bits: int) -> float:
+    """Choose a scalar step whose 3D rounding bound matches the axis-grid bound.
+
+    For grid levels L=2^bits-1, a scalar local-frame step
+    s = ||bbox_span|| / (sqrt(3) L) yields a worst-case residual rounding
+    error sqrt(3)*s/2 = ||bbox_span||/(2L), matching the original axis-wise
+    quantizer's Euclidean half-diagonal bound. This avoids over-quantizing
+    skinny meshes by using only their smallest axis extent.
+    """
     spans = np.asarray(maxs - mins, dtype=np.float64)
-    positive = spans[spans > 0.0]
-    if positive.size == 0:
-        raise CodecError("mesh must have non-zero geometric extent")
-    step = float(positive.min() / ((1 << bits) - 1))
+    diagonal = float(np.linalg.norm(spans))
+    if not np.isfinite(diagonal) or diagonal <= 0.0:
+        raise CodecError("mesh must have finite, non-zero geometric extent")
+    step = diagonal / (np.sqrt(3.0) * ((1 << bits) - 1))
     if not np.isfinite(step) or step <= 0.0:
         raise CodecError("could not derive a finite tangent residual quantization step")
     return step
@@ -433,7 +441,13 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "coordinate_coder": coordinate_coder,
         "position_quantization": "uniform per axis, bounding-box normalized",
         "topology": "triangles, delta indices with zigzag varints, zlib",
-        "method_note": "Prithvi is an engineering analogy inspired by Atharvaveda 12.1, not a claim of a compression algorithm in the text." if method == "prithvi" else "Baseline absolute-coordinate coder.",
+        "method_note": (
+            "Prithvi is an engineering analogy inspired by Atharvaveda 12.1, not a claim of a compression algorithm in the text."
+            if method == "prithvi" else
+            "Research-inspired parallelogram predictor with local tangent-frame residuals."
+            if method == "tangent" else
+            "Baseline absolute-coordinate coder."
+        ),
     }
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
     magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3}[method]
@@ -514,6 +528,7 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         quantized = np.frombuffer(coord_raw, dtype=dtype).astype(np.int64).reshape(vertex_count, 3)
         if np.any(quantized > levels):
             raise CodecError("absolute coordinate is outside quantization range")
+        vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
     elif coder == "prithvi-mesh-adjacency-residual-varint-zlib":
         quantized = _decode_prithvi_coordinates(coord_raw, faces, vertex_count, bits)
         vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
