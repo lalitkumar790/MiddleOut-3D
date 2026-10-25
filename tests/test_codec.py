@@ -29,6 +29,29 @@ class CodecTests(unittest.TestCase):
         high_err = np.linalg.norm(high - self.vertices, axis=1).max()
         self.assertLessEqual(high_err, low_err)
 
+
+    def test_prithvi_predictor_roundtrip_matches_baseline_quantization(self):
+        baseline_payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
+        prithvi_payload = encode_mesh(self.vertices, self.faces, bits=16, method="prithvi")
+        baseline_vertices, baseline_faces, _ = decode_mesh(baseline_payload)
+        vertices, faces, header = decode_mesh(prithvi_payload)
+
+        self.assertTrue(np.array_equal(faces, self.faces))
+        self.assertTrue(np.array_equal(faces, baseline_faces))
+        self.assertTrue(np.array_equal(vertices, baseline_vertices))
+        self.assertIn("prithvi", header["coordinate_coder"])
+        self.assertLessEqual(
+            np.linalg.norm(vertices - self.vertices, axis=1).max(),
+            np.linalg.norm(
+                (self.vertices.max(axis=0) - self.vertices.min(axis=0))
+                / (2 * ((1 << 16) - 1))
+            ) + 1e-12,
+        )
+
+    def test_prithvi_rejects_unsupported_method(self):
+        with self.assertRaises(CodecError):
+            encode_mesh(self.vertices, self.faces, method="magic")
+
     def test_bad_magic_rejected(self):
         with self.assertRaises(CodecError):
             decode_mesh(b"not a MO3D file")
