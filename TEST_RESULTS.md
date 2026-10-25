@@ -37,7 +37,7 @@ Adaptive mode chose a mixture of methods and orderings. It is a size-first searc
 ## Interpretation and limitations
 
 - All in-house method/order combinations are required to preserve mesh topology and satisfy the measured geometry-error budget in CI.
-- The benchmark compares Draco at the same *nominal* position quantization bit setting, but actual distortion can differ. Size must be interpreted alongside measured maximum error and RMSE.
+- The benchmark compares Draco using a short quantization-bit sweep around the requested position precision and selects the smallest payload that meets the baseline's conservative maximum-error bound. Size is interpreted alongside measured maximum error and RMSE; Draco's topology-compression path may reorder point IDs, so decoded points are mapped back to source vertices for validation.
 - The fixtures are synthetic, not a representative CAD, scanning, point-cloud, or robotics dataset.
 - Timing is from a shared hosted runner and is not a universal performance claim.
 - Current format is geometry-only and drops normals, UVs, colors, textures, materials and source-format metadata.
