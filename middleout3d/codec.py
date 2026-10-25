@@ -586,10 +586,11 @@ def _reorder_faces_for_stream(
     """Order triangle rows and/or cyclic starts for delta-varint connectivity.
 
     "source" preserves face rows and cyclic starts.
-    "rotate" preserves face row order but tests all three cyclic starts to
-    minimize signed-varint cost relative to the previous index.
-    "bfs" traverses the triangle dual graph and performs the same cyclic-start
-    optimization. Triangles are never reversed, so winding is preserved.
+    "rotate" greedily chooses each triangle's cyclic start given the preceding index.
+    "rotate_dp" globally minimizes uncompressed signed-varint byte count over all
+    cyclic rotations while preserving row order and winding. It uses three states
+    per face and O(F) time/backpointer memory.
+    "bfs" traverses the triangle dual graph and greedily chooses cyclic starts.
     """
     if face_ordering not in FACE_CODING_OPTIONS:
         raise CodecError(f"face_ordering must be one of: {', '.join(FACE_CODING_OPTIONS)}")
@@ -601,7 +602,54 @@ def _reorder_faces_for_stream(
     if face_count < 2:
         return faces.copy()
 
-    if face_ordering in {"rotate", "rotate_dp"}:
+    if face_ordering == "rotate_dp":
+        # State j means cyclic rotation j of the current triangle. The transition
+        # cost depends only on the previous rotation's last index and current
+        # rotation's three indices, so dynamic programming is exact for the
+        # uncompressed signed-varint objective.
+        rotations = np.stack((faces, np.roll(faces, -1, axis=1), np.roll(faces, -2, axis=1)), axis=1)
+        costs = np.full((face_count, 3), np.iinfo(np.int64).max // 4, dtype=np.int64)
+        parents = np.zeros((face_count, 3), dtype=np.int8)
+
+        def varint_size(value: int) -> int:
+            encoded = _zigzag_encode(value)
+            size = 1
+            while encoded >= 0x80:
+                encoded >>= 7
+                size += 1
+            return size
+
+        # First triangle starts from the stream's initial previous index 0.
+        for state in range(3):
+            a, b, c = (int(v) for v in rotations[0, state])
+            costs[0, state] = (
+                varint_size(a) + varint_size(b - a) + varint_size(c - b)
+            )
+
+        for face_index in range(1, face_count):
+            for state in range(3):
+                a, b, c = (int(v) for v in rotations[face_index, state])
+                best_cost = None
+                best_parent = 0
+                internal_cost = varint_size(b - a) + varint_size(c - b)
+                for previous_state in range(3):
+                    previous_last = int(rotations[face_index - 1, previous_state, 2])
+                    candidate_cost = int(costs[face_index - 1, previous_state]) + varint_size(a - previous_last) + internal_cost
+                    if best_cost is None or candidate_cost < best_cost:
+                        best_cost = candidate_cost
+                        best_parent = previous_state
+                costs[face_index, state] = best_cost
+                parents[face_index, state] = best_parent
+
+        state = int(np.argmin(costs[-1]))
+        output = np.empty_like(faces)
+        for face_index in range(face_count - 1, -1, -1):
+            output[face_index] = rotations[face_index, state]
+            if face_index:
+                state = int(parents[face_index, state])
+        return output
+
+    if face_ordering == "rotate":
         traversal = list(range(face_count))
     else:
         edge_faces: dict[tuple[int, int], list[int]] = {}
@@ -646,52 +694,6 @@ def _reorder_faces_for_stream(
                         visited[neighbor] = True
                         queue.append(neighbor)
 
-    if face_ordering == "rotate_dp":
-        # Three-state dynamic programming minimizes raw signed-varint byte count.
-        rotations_by_face: list[tuple[tuple[int, int, int], ...]] = []
-        for face_index in traversal:
-            a, b, c = (int(x) for x in faces[face_index])
-            rotations_by_face.append(((a, b, c), (b, c, a), (c, a, b)))
-
-        costs = []
-        for rotation in rotations_by_face[0]:
-            previous = 0
-            cost = 0
-            for value in rotation:
-                cost += len(_encode_varint(_zigzag_encode(value - previous)))
-                previous = value
-            costs.append(cost)
-        backpointers: list[tuple[int, int, int]] = []
-
-        for face_position in range(1, len(rotations_by_face)):
-            current_costs = []
-            current_back = []
-            for rotation in rotations_by_face[face_position]:
-                best = None
-                best_previous = 0
-                for previous_index, previous_cost in enumerate(costs):
-                    last = rotations_by_face[face_position - 1][previous_index][-1]
-                    transition = 0
-                    for value in rotation:
-                        transition += len(_encode_varint(_zigzag_encode(value - last)))
-                        last = value
-                    candidate = previous_cost + transition
-                    if best is None or (candidate, previous_index) < (best, best_previous):
-                        best, best_previous = candidate, previous_index
-                current_costs.append(int(best))
-                current_back.append(best_previous)
-            costs = current_costs
-            backpointers.append(tuple(current_back))
-
-        selected = [0] * len(rotations_by_face)
-        selected[-1] = min(range(3), key=lambda index: (costs[index], index))
-        for face_position in range(len(rotations_by_face) - 1, 0, -1):
-            selected[face_position - 1] = backpointers[face_position - 1][selected[face_position]]
-        return np.asarray(
-            [rotations_by_face[index][selected[index]] for index in range(len(rotations_by_face))],
-            dtype=np.int64,
-        )
-
     reordered: list[tuple[int, int, int]] = []
     previous = 0
     for face_index in traversal:
@@ -710,7 +712,6 @@ def _reorder_faces_for_stream(
         reordered.append(chosen)
         previous = chosen[-1]
     return np.asarray(reordered, dtype=np.int64)
-
 
 def _decode_face_stream(face_raw: bytes, vertex_count: int, face_count: int) -> np.ndarray:
     face_deltas = _decode_varints(face_raw, face_count * 3)
