@@ -1,3 +1,59 @@
+# Face-stream ordering experiment: source vs rotate-only vs BFS
+
+**Run:** [GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40196914983)  
+**Archived result:** [JSON](results/face_connectivity_study_2026-10-25.json) · [CSV](results/face_connectivity_study_2026-10-25.csv)  
+**Configuration:** six deterministic synthetic OBJ meshes, 16 coordinate bits/axis, one timing repetition, seven in-house coders and three vertex orderings.
+
+This study isolates the face/connectivity stream. It tests (1) preserving face row order and cyclic starts, (2) keeping row order but choosing the cheapest cyclic start per triangle, and (3) BFS traversal of the face-adjacency graph plus cyclic-start optimization. Triangles are only cyclically rotated, never reversed, so winding is preserved.
+
+## Aggregate bytes by vertex ordering
+
+These totals sum the six synthetic files across seven coders. For the fairest comparison, also see the per-coder table below.
+
+| Vertex ordering | Source faces | Rotate-only | BFS faces | Rotate-only change | BFS change |
+|---|---:|---:|---:|---:|---:|
+| Source | 376,567 B | 362,336 B | 395,509 B | **3.78% smaller** | 5.03% larger |
+| BFS | 293,014 B | 292,587 B | 347,803 B | 0.15% smaller | 18.70% larger |
+| Morton | 529,009 B | 520,882 B | 569,686 B | 1.54% smaller | 7.69% larger |
+
+## Per-coder totals
+
+| Vertex order | Coordinate coder | Source faces | Rotate-only | BFS faces | Rotate-only reduction | BFS change |
+|---|---|---:|---:|---:|---:|---:|
+| Source | Baseline | 62,652 | 60,619 | 65,358 | 3.24% | 4.32% larger |
+| Source | Prithvi | 48,132 | 46,099 | 50,838 | 4.22% | 5.62% larger |
+| Source | Tangent | 49,044 | 47,011 | 51,750 | 4.15% | 5.52% larger |
+| Source | Weighted tangent | 53,828 | 51,795 | 56,534 | 3.78% | 5.03% larger |
+| Source | Normal-fine tangent | 54,527 | 52,494 | 57,233 | 3.73% | 4.96% larger |
+| Source | Chandas tangent | 54,570 | 52,537 | 57,276 | 3.73% | 4.96% larger |
+| Source | Adaptive Chandas | 53,814 | 51,781 | 56,520 | 3.78% | 5.03% larger |
+| BFS | Baseline | 50,330 | 50,269 | 58,157 | 0.12% | 15.55% larger |
+| BFS | Prithvi | 37,041 | 36,980 | 44,868 | 0.16% | 21.13% larger |
+| BFS | Tangent | 36,077 | 36,016 | 43,904 | 0.17% | 21.70% larger |
+| BFS | Weighted tangent | 41,869 | 41,808 | 49,696 | 0.15% | 18.69% larger |
+| BFS | Normal-fine tangent | 42,607 | 42,546 | 50,434 | 0.14% | 18.37% larger |
+| BFS | Chandas tangent | 42,669 | 42,608 | 50,496 | 0.14% | 18.34% larger |
+| BFS | Adaptive Chandas | 42,421 | 42,360 | 50,248 | 0.14% | 18.45% larger |
+| Morton | Baseline | 80,383 | 79,222 | 86,194 | 1.44% | 7.23% larger |
+| Morton | Prithvi | 70,430 | 69,269 | 76,241 | 1.65% | 8.25% larger |
+| Morton | Tangent | 70,387 | 69,226 | 76,198 | 1.65% | 8.26% larger |
+| Morton | Weighted tangent | 76,483 | 75,322 | 82,294 | 1.52% | 7.60% larger |
+| Morton | Normal-fine tangent | 77,443 | 76,282 | 83,254 | 1.50% | 7.50% larger |
+| Morton | Chandas tangent | 77,320 | 76,159 | 83,131 | 1.50% | 7.52% larger |
+| Morton | Adaptive Chandas | 76,563 | 75,402 | 82,374 | 1.52% | 7.59% larger |
+
+## Interpretation
+
+- **Rotation-only is the useful result.** It reduced total encoded bytes for all 21 coder/vertex-order combinations. The improvement was largest with source vertex order (3.24–4.22% per coder) and smallest with BFS vertex order (0.12–0.17%). The extra face-order header field costs bytes on small meshes, so per-file results can still lose.
+- **BFS face traversal loses.** It enlarged full payloads for all 21 combinations, particularly when the vertex ordering was already BFS. The chosen traversal may improve local index deltas, but changes the entire sequence of signed deltas and can make zlib's job worse.
+- **Adaptive face ordering is now supported.** The \`face_ordering=auto\` option serializes source, rotate-only and BFS candidates and retains the shortest *complete* payload for the selected coordinate coder. The \`method=auto\` encoder uses this option when comparing coordinate methods.
+- **Correctness checks passed.** Topology and geometric error-budget checks succeeded for every evaluated face strategy. Cyclic rotation preserves triangle winding.
+
+The timings use a single repetition with no separate warmup, and the fixtures are synthetic. Treat the bytes as the most reproducible result; do not generalize the observed percentage to arbitrary CAD, scan or robotics meshes.
+
+
+---
+
 # Predictive ordering experiment: negative result
 
 **Run:** [GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40195070244)  
