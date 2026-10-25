@@ -37,6 +37,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Benchmark complete payloads
         run: python -m middleout3d benchmark-connectivity samples --out results/draco-breaker-rotate-dp.json --bits 16 --repeats 3
+        env:
+          PYTHONFAULTHANDLER: "1"
       - name: Validate, summarize, and append experiment log
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -45,10 +47,18 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import traceback
           from pathlib import Path
 
           path = Path("results/draco-breaker-rotate-dp.json")
-          report = json.loads(path.read_text(encoding="utf-8"))
+          csv_path = path.with_suffix(".csv")
+          if not path.exists() or not csv_path.exists():
+              raise SystemExit(f"Benchmark must create both JSON and CSV: json_exists={path.exists()}, csv_exists={csv_path.exists()}")
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except Exception:
+              traceback.print_exc()
+              raise
           if report["errors"]:
               raise SystemExit(f"Benchmark errors: {report['errors']}")
           aggregate_fields = (
