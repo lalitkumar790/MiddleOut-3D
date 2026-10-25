@@ -17,13 +17,56 @@ Relevant existing work:
 
 ## Current prototype
 
-The MO3D v1 experimental codec stores:
+MO3D has two coordinate coding methods:
 
-- XYZ coordinates quantized to a configurable precision of 8–24 bits per coordinate.
-- Triangle connectivity encoded with delta indices and unsigned varints.
-- zlib-compressed coordinate and face streams.
+- **Baseline:** per-axis quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
+- **Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, mapped to unsigned integers with zigzag coding, encoded as varints, then compressed with zlib.
 
-**Important limitation:** this first codec is lossy in position and geometry-only. It preserves triangle index connectivity, but drops normals, UV coordinates, colors, textures, materials, and source-format metadata. It is deliberately simple so we can test a measurable baseline before attempting a better predictor, topology coding, or learned representation. Do not use it as a replacement for production CAD, engineering, or archival data.
+Both methods share the same quantizer, metadata and triangle-index stream. This makes the comparison useful for isolating the coordinate coder, though the total file still contains headers and zlib stream overhead.
+
+**Important limitation:** both methods are lossy in position and geometry-only. They preserve triangle index connectivity and reconstructed quantized vertex positions, but drop normals, UV coordinates, colors, textures, materials, and source-format metadata. Do not use this experimental codec as a replacement for production CAD, engineering, or archival data.
+
+## Prithvi: inspiration, not a historical claim
+
+The name is a modern engineering analogy inspired by Atharvaveda 12.1, the *Prithvi Sukta*. Verse 2 describes Earth in terms of heights, slopes, plains, and plants with varied properties. The analogy we borrow is **one shared world supporting many different local forms**: let mesh connectivity predict nearby geometry so that the encoder stores differences, rather than every coordinate independently.
+
+This does **not** imply that the Atharvaveda states or anticipates this mathematical compression algorithm. The predictor is a contemporary, falsifiable engineering hypothesis.
+
+Reference translations: [Atharva-Veda Samhita, Book XII, Hymn 1 (Wikisource)](https://en.wikisource.org/wiki/Atharva-Veda_Samhita/Book_XII/Hymn_1) and [Ralph T. H. Griffith translation (Internet Sacred Text Archive)](https://original.sacred-texts.com/hin/av/av12001.htm).
+
+### Mathematical design
+
+Let original vertex coordinates be $x_i\in\mathbb{R}^3$, per-axis bounds be $b_{\min},b_{\max}$, and precision be $B$ bits. First quantize each coordinate to the integer grid:
+
+\[
+Q_i=\operatorname{round}\left(
+\frac{x_i-b_{\min}}{b_{\max}-b_{\min}}(2^B-1)
+\right)
+\]
+
+For constant axes, the normalized coordinate is set to zero. Faces define a mesh adjacency graph $G=(V,E)$. For vertex index $i$, choose the greatest adjacent index lower than $i$:
+
+\[
+p(i)=\max\{j\mid j<i,\ (i,j)\in E\}
+\]
+
+If no earlier neighbor exists, use the zero vector as the predictor; otherwise $\widehat Q_i=Q_{p(i)}$. The encoder stores the signed residual:
+
+\[
+r_i=Q_i-\widehat Q_i
+\]
+
+Each signed integer is mapped to a non-negative integer using zigzag coding ($2r$ for $r\ge0$, otherwise $-2r-1$), encoded as a variable-length integer, and compressed with zlib. Since $p(i)<i$, the decoder can reconstruct in vertex-index order:
+
+\[
+Q_i=\widehat Q_i+r_i
+\]
+
+The decoder recomputes parents from the face stream, so there is no separate parent table. The prediction stream is exact with respect to the quantized grid; the only geometric loss remains the original quantization step.
+
+### Why this may help—and why it may fail
+
+When a vertex's earlier adjacent neighbor is geometrically nearby, its residuals can have small magnitudes and require fewer varint bytes. But vertex ordering is crucial: non-local index assignments can yield large residuals, and the predictor may encode some meshes worse than the absolute baseline. zlib can also compress absolute integer streams efficiently. The benchmark therefore measures Prithvi **against the baseline at the same bit depth** instead of assuming it is better.
 
 ## Quick start
 
@@ -42,7 +85,7 @@ python -m middleout3d generate-fixtures --out samples
 python -m middleout3d benchmark samples --out results/baseline.json --bits 16 --repeats 5
 
 # Encode a mesh
-python -m middleout3d encode samples/icosphere.obj --out results/icosphere.mo3d --bits 16
+python -m middleout3d encode samples/icosphere.obj --out results/icosphere.mo3d --bits 16 --method prithvi
 
 # Decode to a standard mesh file
 python -m middleout3d decode results/icosphere.mo3d --out results/icosphere-restored.obj
@@ -56,7 +99,9 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 ## How to read the benchmark
 
 - `gzip_lossless_bytes`: gzip result for the original file bytes, including original formatting and any attributes in that file.
-- `mo3d_lossy_geometry_bytes`: custom prototype size containing only geometry and triangle topology.
+- `mo3d_lossy_geometry_bytes`: absolute-coordinate baseline size containing only geometry and triangle topology.
+- `prithvi_bytes` and `prithvi_size_reduction_vs_mo3d_baseline_pct`: predictor-coded size and size difference relative to the baseline at the same position precision.
+- `prithvi_geometry_max_vertex_error`: maximum vertex-position error after decoding the Prithvi stream.
 - `mo3d_source_to_encoded_ratio`: included as a rough exploratory signal only; **it is not a fair codec comparison**, because MO3D is lossy and drops attributes.
 - `geometry_max_vertex_error` / `geometry_rmse_vertex_distance`: distortion between corresponding source vertices and reconstructed vertices.
 - `topology_exact`: verifies triangle index connectivity is unchanged.
@@ -72,10 +117,12 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 
 1. Establish stable baseline data and test correctness.
 2. Add a Draco baseline with matched geometry precision and preserved attributes where supported.
-3. Separate lossless mesh/attribute compression from lossy geometric quantization.
-4. Investigate predictors for vertex positions, local coordinate frames, face-index entropy coding, and file/model-specific structure.
-5. Evaluate point clouds and repeated CAD assemblies after mesh benchmarks are trustworthy.
-6. Explore neural representations only with fixed distortion targets and full accounting for model weights, per-model codes, encode time, decode time, and decoder size.
+3. Evaluate Prithvi residual coding across multiple vertex orderings and mesh families; compare it against the absolute-coordinate baseline.
+4. Add a Draco baseline with equivalent attributes and measured reconstruction error.
+5. Separate lossless mesh/attribute compression from lossy geometric quantization.
+6. Investigate stronger predictors, local coordinate frames, face-index entropy coding, and file/model-specific structure.
+7. Evaluate point clouds and repeated CAD assemblies after mesh benchmarks are trustworthy.
+8. Explore neural representations only with fixed distortion targets and full accounting for model weights, per-model codes, encode time, decode time, and decoder size.
 
 ## What would count as a win?
 
