@@ -48,12 +48,14 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | normal-fine B | normal-fine save % | Draco B | Draco bits | error target met | adaptive best")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | normal-fine B | NF ratio | NF normal RMSE | NF tangent RMSE | NF save % | Draco B | Draco bits | error target met | adaptive best")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
                       f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
                       f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | {result["normal_fine_tangent_bytes"]} | '
+                      f'{result["normal_fine_tangent_normal_step_ratio"]} | '
+                      f'{result["normal_fine_tangent_normal_component_rmse"]} | {result["normal_fine_tangent_tangential_component_rmse"]} | '
                       f'{result["normal_fine_tangent_size_reduction_vs_baseline_pct"]}% | {result["draco_bytes"]} | '
                       f'{result["draco_quantization_bits"]} | {result["draco_error_budget_met"]} | '
                       f'{row["best_candidate_method"]}/{row["best_candidate_ordering"]}/{row["best_candidate_bytes"]} B'
