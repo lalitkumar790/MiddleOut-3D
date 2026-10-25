@@ -139,7 +139,7 @@ def _benchmark_draco(
 
     ordered_vertices, ordered_faces, permutation = reorder_mesh(vertices, faces, ordering)
     spans = vertices.max(axis=0) - vertices.min(axis=0)
-    target_error_bound = float(np.linalg.norm(spans / (2 * ((1 << bits) - 1)))
+    target_error_bound = float(np.linalg.norm(spans / (2 * ((1 << bits) - 1))))
     tree = cKDTree(ordered_vertices)
     candidate_bits = list(range(max(8, bits - 2), min(24, bits + 2) + 1))
     candidate_results: list[dict[str, Any]] = []
