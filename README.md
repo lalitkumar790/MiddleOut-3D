@@ -18,6 +18,15 @@ Relevant existing work:
 - [Neural Compression for 3D Geometry Sets (ICCV 2025)](https://openaccess.thecvf.com/content/ICCV2025/html/Ren_Neural_Compression_for_3D_Geometry_Sets_ICCV_2025_paper.html) — neural compression for collections of 3D mesh models, reporting up to 900× in its studied setting. That result is for a specific representation and task, not a universal per-file promise.
 - [Mesh Compression with Quantized Neural Displacement Fields (2025)](https://diglib.eg.org/items/d54ad053-5b75-49a3-91a4-1750449b7418) — neural displacement-field approach for lossy mesh compression.
 
+## Indian mathematical traditions: research inspiration, not claims of a hidden codec
+
+We are testing ideas motivated by documented mathematical traditions and classical patterned writing, but the resulting algorithms are modern implementations and must earn their place in controlled benchmarks.
+
+- **Piṅgala's *Chandaḥśāstra*** describes enumeration and indexing of metrical patterns and counting patterns with a given number of short syllables. Jayant Shah's historical study [A History of Piṅgala's Combinatorics](https://sanskrit.uohyd.ac.in/Algorithms_in_Ancient_India/Material/Pingala.pdf) discusses the mathematics and points out that some later interpretations of *meru-prastāra* are debated. We adapted the rank/unrank principle into MO3D v6/v7 sparse residual coding. It is an experiment inspired by enumerative coding, not a claim that the exact codec appears in the text.
+- **The Śulbasūtras** document geometric constructions, including right-triangle relationships and shape/area transformations. See S. G. Dani's [historical review](https://doi.org/10.1007/978-3-031-40846-5_114) and Dani & Limaye's [discussion of geometric constructions](https://publications.azimpremjiuniversity.edu.in/2784/). These texts are a useful reminder to express geometry through invariants and constructions; our tangent-frame predictor is modern computer graphics, not a direct Śulbasūtra algorithm.
+- **Vedānta Deśika's *Pādukā Sahasram*** includes the *Citra Paddhati*, a sequence of poetic compositions with patterned arrangements. A [Tirumala Tirupati Devasthanams publication](https://ebooks.tirumala.org/downloads/Vedantha%20Deshika.pdf) describes examples of patterned reading. These are sophisticated literary structures, not an established compression method. They may inspire graph-walk or pattern-ordering hypotheses, but any benefit has to be measured.
+- **Modern “Vedic Mathematics” sutras need historical care.** S. G. Dani's [Vedic Mathematics in Perspective](https://www.math.tifr.res.in/~dani/vmissc.pdf) discusses why the claim that the familiar 16-sutra system is directly evidenced in extant Vedic texts is disputed. We therefore use traceable primary-text traditions (such as Piṅgala's combinatorics and the Śulbasūtras) where possible rather than attributing every modern shortcut to the Vedas.
+
 ## Current prototype
 
 MO3D has seven versioned coordinate coders:
@@ -78,6 +87,7 @@ and therefore the same conservative per-step Euclidean rounding-error ceiling `D
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
 - **morton:** deterministic 3D Morton/Z-order traversal, sorting vertices by a spatial locality code.
+- **predictive:** greedy traversal that prioritizes vertices with the smallest estimated local predictor-residual cost. This is a new heuristic, not an established Vedic algorithm; benchmark results decide whether it stays.
 
 The encoder remaps triangle indices consistently, so each traversal represents the same surface. With BFS or Morton, the decoded mesh uses the selected reordered vertex indexing rather than recovering the source file's original vertex IDs; current MO3D is geometry-only and does not preserve external per-vertex attributes. The benchmark maps decoded vertices and faces back to source indexing for validation.
 
@@ -216,7 +226,7 @@ MO3D v1/v2 is experimental. The decoder validates headers, stream lengths, coord
 
 ## Measured baseline, Prithvi and vertex ordering
 
-See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) for the full hosted experiments. The latest [vertex-ordering JSON](results/vertex_ordering_study_2026-10-25.json) and [CSV](results/vertex_ordering_study_2026-10-25.csv) compare source order, BFS, and Morton under both coordinate coders.
+See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) for the full hosted experiments. The archived [vertex-ordering JSON](results/vertex_ordering_study_2026-10-25.json) and [CSV](results/vertex_ordering_study_2026-10-25.csv) record the first source/BFS/Morton study. A new predictive-cost ordering is now under CI evaluation against the baseline, Prithvi, tangent methods, and Draco.
 
 For six synthetic fixtures at 16 bits per axis:
 
