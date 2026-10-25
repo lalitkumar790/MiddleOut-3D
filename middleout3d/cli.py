@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     enc.add_argument("input")
     enc.add_argument("--out", required=True)
     enc.add_argument("--bits", type=int, default=16, help="position quantization bits (8-24); lower is smaller but less accurate")
-    enc.add_argument("--method", choices=["baseline", "prithvi"], default="baseline", help="coordinate coder: absolute baseline or Prithvi mesh-adjacency residual predictor")
+    enc.add_argument("--method", choices=["baseline", "prithvi", "tangent"], default="baseline", help="coordinate coder: absolute baseline, Prithvi adjacency residuals, or tangent-space parallelogram residuals")
     enc.add_argument("--ordering", choices=list(ORDERINGS), default="source", help="vertex ordering: source, breadth-first mesh traversal (bfs), or spatial Morton ordering (morton)")
     dec = sub.add_parser("decode", help="decode a .mo3d file to OBJ, PLY, STL or OFF")
     dec.add_argument("input")
