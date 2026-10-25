@@ -11,6 +11,7 @@ Both are lossy in position and omit mesh attributes outside XYZ + triangle faces
 from __future__ import annotations
 
 import json
+import math
 import struct
 import zlib
 from pathlib import Path
@@ -63,6 +64,115 @@ def _decode_varints(data: bytes, expected: int) -> list[int]:
         shift = 0
     if shift != 0 or len(out) != expected:
         raise CodecError(f"expected {expected} varints, got {len(out)}")
+    return out
+
+
+CHANDAS_BLOCK_SIZE = 64
+
+
+def _read_varint(data: bytes, cursor: int) -> tuple[int, int]:
+    """Read one unsigned varint and return (value, new_cursor)."""
+    value = 0
+    shift = 0
+    while cursor < len(data):
+        byte = data[cursor]
+        cursor += 1
+        value |= (byte & 0x7F) << shift
+        if byte & 0x80:
+            shift += 7
+            if shift > 63:
+                raise CodecError("invalid or oversized varint")
+            continue
+        return value, cursor
+    raise CodecError("truncated varint")
+
+
+def _combination_rank_colex(positions: list[int]) -> int:
+    """Rank a sorted subset with the combinatorial number system."""
+    return sum(math.comb(position, index + 1) for index, position in enumerate(positions))
+
+
+def _combination_unrank_colex(rank: int, n: int, k: int) -> list[int]:
+    """Inverse of _combination_rank_colex for 0 <= rank < C(n, k)."""
+    if k < 0 or k > n or rank < 0 or rank >= math.comb(n, k):
+        raise CodecError("invalid enumerative subset rank")
+    positions = [0] * k
+    upper = n
+    for order in range(k, 0, -1):
+        low, high = order - 1, upper - 1
+        best = order - 1
+        while low <= high:
+            mid = (low + high) // 2
+            if math.comb(mid, order) <= rank:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        positions[order - 1] = best
+        rank -= math.comb(best, order)
+        upper = best
+    if rank != 0:
+        raise CodecError("invalid enumerative subset rank")
+    return positions
+
+
+def _encode_chandas_sparse_signed(values: list[int]) -> bytes:
+    """Encode sparse signed residuals by enumerating non-zero positions per block.
+
+    Inspiration: Pingala's chandas procedures for enumerating, counting and
+    recovering laghu/guru patterns (often described via prastara, nashta and
+    uddishta). This is a modern adaptation: rank the subset of non-zero slots
+    in each fixed-length block, then store only the non-zero signed magnitudes.
+    The scripture/history is not claimed to contain this codec.
+    """
+    out = bytearray(b"CHS1")
+    out.extend(_encode_varint(len(values)))
+    for start in range(0, len(values), CHANDAS_BLOCK_SIZE):
+        block = values[start:start + CHANDAS_BLOCK_SIZE]
+        positions = [idx for idx, value in enumerate(block) if value != 0]
+        nonzero_count = len(positions)
+        out.extend(_encode_varint(nonzero_count))
+        pattern_count = math.comb(len(block), nonzero_count)
+        rank = _combination_rank_colex(positions)
+        rank_bits = (pattern_count - 1).bit_length()
+        rank_bytes = (rank_bits + 7) // 8
+        if rank_bytes:
+            out.extend(rank.to_bytes(rank_bytes, "big"))
+        for position in positions:
+            out.extend(_encode_varint(_zigzag_encode(int(block[position]))))
+    return bytes(out)
+
+
+def _decode_chandas_sparse_signed(data: bytes, expected_count: int) -> list[int]:
+    if not data.startswith(b"CHS1"):
+        raise CodecError("invalid Chandas sparse-residual signature")
+    cursor = 4
+    count, cursor = _read_varint(data, cursor)
+    if count != expected_count:
+        raise CodecError("Chandas residual count does not match the mesh topology")
+    out: list[int] = []
+    while len(out) < expected_count:
+        block_len = min(CHANDAS_BLOCK_SIZE, expected_count - len(out))
+        nonzero_count, cursor = _read_varint(data, cursor)
+        if nonzero_count > block_len:
+            raise CodecError("Chandas non-zero count exceeds block length")
+        pattern_count = math.comb(block_len, nonzero_count)
+        rank_bits = (pattern_count - 1).bit_length()
+        rank_bytes = (rank_bits + 7) // 8
+        if cursor + rank_bytes > len(data):
+            raise CodecError("truncated Chandas subset rank")
+        rank = int.from_bytes(data[cursor:cursor + rank_bytes], "big") if rank_bytes else 0
+        cursor += rank_bytes
+        if rank >= pattern_count:
+            raise CodecError("Chandas subset rank is outside its range")
+        positions = _combination_unrank_colex(rank, block_len, nonzero_count)
+        block = [0] * block_len
+        for position in positions:
+            value, cursor = _read_varint(data, cursor)
+            block[position] = _zigzag_decode(value)
+        out.extend(block)
+    if cursor != len(data):
+        raise CodecError("unexpected trailing bytes in Chandas sparse residuals")
     return out
 
 
