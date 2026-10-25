@@ -189,6 +189,88 @@ def _mesh_parents(faces: np.ndarray, vertex_count: int) -> np.ndarray:
     return parents
 
 
+def _mesh_parallelogram_candidates(faces: np.ndarray, vertex_count: int) -> list[list[tuple[int, int, int]]]:
+    """Return causal parallelogram stencils per target vertex.
+
+    If two triangles share edge (u, v) and their opposite vertices are target t
+    and earlier vertex d, the classic parallelogram predictor is Q[u]+Q[v]-Q[d].
+    A stencil is valid only when every predictor vertex has index < t, allowing
+    the decoder to reproduce it without side information. Boundary edges have
+    no opposite pair and therefore yield no stencil.
+    """
+    edge_opposites: dict[tuple[int, int], list[int]] = {}
+    for tri in faces:
+        a, b, c = (int(x) for x in tri)
+        for u, v, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            if u == v or opposite in (u, v):
+                continue
+            edge = (u, v) if u < v else (v, u)
+            edge_opposites.setdefault(edge, []).append(opposite)
+
+    candidates: list[list[tuple[int, int, int]]] = [[] for _ in range(vertex_count)]
+    for (u, v), raw_opposites in edge_opposites.items():
+        opposites = sorted(set(raw_opposites))
+        for target in opposites:
+            if u >= target or v >= target:
+                continue
+            for other in opposites:
+                if other == target or other >= target:
+                    continue
+                candidates[target].append((u, v, other))
+    # Non-manifold input can create duplicate stencils; keep output deterministic.
+    return [sorted(set(stencils)) for stencils in candidates]
+
+
+def _predict_parallelogram(
+    quantized: np.ndarray, candidates: list[list[tuple[int, int, int]]], index: int, fallback_parent: int
+) -> np.ndarray:
+    """Average every available prior-only parallelogram prediction."""
+    stencils = candidates[index]
+    if stencils:
+        predictions = np.asarray(
+            [quantized[u] + quantized[v] - quantized[opposite] for u, v, opposite in stencils],
+            dtype=np.int64,
+        )
+        # np.rint gives deterministic nearest-even integer rounding in encoder/decoder.
+        return np.rint(predictions.mean(axis=0)).astype(np.int64)
+    if fallback_parent >= 0:
+        return quantized[fallback_parent].astype(np.int64, copy=False)
+    return np.zeros(3, dtype=np.int64)
+
+
+def _encode_parallelogram_coordinates(quantized: np.ndarray, faces: np.ndarray, level: int) -> bytes:
+    """Encode residuals from a multi-parallelogram predictor, then zlib."""
+    fallback_parents = _mesh_parents(faces, len(quantized))
+    candidates = _mesh_parallelogram_candidates(faces, len(quantized))
+    residual_stream = bytearray()
+    for index, target in enumerate(quantized):
+        prediction = _predict_parallelogram(quantized, candidates, index, int(fallback_parents[index]))
+        for residual in target - prediction:
+            residual_stream.extend(_encode_varint(_zigzag_encode(int(residual))))
+    return zlib.compress(bytes(residual_stream), level)
+
+
+def _decode_parallelogram_coordinates(
+    coord_raw: bytes, faces: np.ndarray, vertex_count: int, bits: int
+) -> np.ndarray:
+    residuals = _decode_varints(coord_raw, vertex_count * 3)
+    fallback_parents = _mesh_parents(faces, vertex_count)
+    candidates = _mesh_parallelogram_candidates(faces, vertex_count)
+    levels = (1 << bits) - 1
+    quantized = np.zeros((vertex_count, 3), dtype=np.int64)
+    cursor = 0
+    for index in range(vertex_count):
+        prediction = _predict_parallelogram(quantized, candidates, index, int(fallback_parents[index]))
+        reconstructed = prediction.copy()
+        for axis in range(3):
+            reconstructed[axis] += _zigzag_decode(residuals[cursor])
+            cursor += 1
+        if np.any(reconstructed < 0) or np.any(reconstructed > levels):
+            raise CodecError("decoded parallelogram residual is outside quantization range")
+        quantized[index] = reconstructed
+    return quantized
+
+
 def _encode_face_stream(faces: np.ndarray, level: int) -> bytes:
     face_delta_stream = bytearray()
     previous = 0
@@ -497,9 +579,9 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         faces: M x 3 triangle indices.
         bits: Per-axis position precision, 8–24 bits.
         level: zlib compression level, 0–9.
-        method: "baseline" or "prithvi". Prithvi predicts each quantized vertex
-            from its greatest lower-indexed adjacent vertex, coding signed
-            coordinate residuals rather than absolute coordinates.
+        method: "baseline", "prithvi", "parallelogram", or "auto". The
+            parallelogram mode averages causal neighboring-face parallelogram
+            predictions; auto selects the smallest resulting bitstream.
         ordering: "source", "bfs", or "morton" controls vertex traversal order.
             Faces are reindexed to preserve the represented surface.
 
