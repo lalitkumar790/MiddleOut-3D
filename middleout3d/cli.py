@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     dec = sub.add_parser("decode", help="decode a .mo3d file to OBJ, PLY, STL or OFF")
     dec.add_argument("input")
     dec.add_argument("--out", required=True)
-    bench = sub.add_parser("benchmark", help="benchmark gzip against this lossy geometry prototype")
+    bench = sub.add_parser("benchmark", help="compare baseline and Prithvi compression under source, BFS, and Morton vertex orderings")
     bench.add_argument("input_dir", nargs="?", default="samples")
     bench.add_argument("--out", default="results/baseline.json")
     bench.add_argument("--bits", type=int, default=16)
