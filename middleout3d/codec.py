@@ -220,7 +220,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "method_note": "Prithvi is an engineering analogy inspired by Atharvaveda 12.1, not a claim of a compression algorithm in the text." if method == "prithvi" else "Baseline absolute-coordinate coder.",
     }
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    return MAGIC + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
+    magic = MAGIC_V2 if method == "prithvi" else MAGIC_V1
+    return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
 
 
 def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
@@ -228,10 +229,14 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if not isinstance(payload, (bytes, bytearray, memoryview)):
         raise TypeError("payload must be bytes-like")
     payload = bytes(payload)
-    if len(payload) < len(MAGIC) + 4 or not payload.startswith(MAGIC):
+    magic_len = len(MAGIC_V1)
+    if len(payload) < magic_len + 4:
         raise CodecError("not a supported MO3D bitstream")
-    header_len = struct.unpack(">I", payload[len(MAGIC):len(MAGIC) + 4])[0]
-    start = len(MAGIC) + 4
+    magic = payload[:magic_len]
+    if magic not in (MAGIC_V1, MAGIC_V2):
+        raise CodecError("not a supported MO3D bitstream")
+    header_len = struct.unpack(">I", payload[magic_len:magic_len + 4])[0]
+    start = magic_len + 4
     if header_len < 2 or header_len > MAX_HEADER_BYTES or start + header_len > len(payload):
         raise CodecError("invalid metadata header length")
     try:
@@ -241,6 +246,9 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2):
         raise CodecError("unsupported MO3D format version")
     version = header["version"]
+    expected_version = 1 if magic == MAGIC_V1 else 2
+    if version != expected_version:
+        raise CodecError("MO3D magic and header version do not match")
     bits = header.get("position_bits")
     vertex_count = header.get("vertex_count")
     face_count = header.get("face_count")
