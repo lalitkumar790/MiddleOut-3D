@@ -408,10 +408,11 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "attributes_preserved": ["triangle connectivity", "vertex positions (quantized or bounded tangent residuals)"],
         "attributes_dropped": ["normals", "UVs", "colors", "textures", "materials", "source-format metadata"],
         "fair_comparison_warning": (
-            "Each method/order combination uses the same geometry/topology and position-bit setting. "
-            "The tangent methods use a scalar residual step chosen to match the baseline quantizer's "
-            "conservative Euclidean error bound; actual distortion is measured separately. Results are "
-            "synthetic, geometry-only and lossy. Compare against Draco with matched attributes and distortion."
+            "The in-house methods use the requested position-bit setting. For each mesh/ordering, Draco "
+            "is tested at multiple quantization bit depths and the smallest stream meeting the baseline's "
+            "conservative max-vertex-error bound is selected. Actual error and RMSE are reported. This "
+            "compares geometry-only lossy payloads; MO3D omits normals, UVs, colors, textures, materials "
+            "and source metadata, so no claim is made about full-asset compression."
         ),
         "decoder_bytes_exact": bool(source["baseline_topology_exact"]),
         "prithvi_decoder_bytes_exact": bool(source["prithvi_topology_exact"]),
