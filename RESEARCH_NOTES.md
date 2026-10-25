@@ -81,21 +81,21 @@ For degenerate or ill-conditioned stencils, it falls back to the classic paralle
 
 The 2024 tangent-space paper reports that local-coordinate quantization need not allocate equal precision to the normal and tangent directions. This is motivated by the fact that normal-direction error can more visibly alter the reconstructed surface. The full paper uses a more sophisticated encoder and evaluates rate-distortion; this implementation tests a small fixed-step allocation.
 
-Let \(s=D/(\sqrt{3}L)\), where \(D\) is the mesh bounding-box diagonal and \(L=2^B-1\). In the local frame, the first residual component is normal to the base triangle and the remaining two are tangential. MO3D v5 sets
+Let \(s=D/(\sqrt{3}L)\), where \(D\) is the mesh bounding-box diagonal and \(L=2^B-1\). In the local frame, the first residual component is normal to the base triangle and the remaining two are tangential. MO3D v5 tests a normal-step ratio \(r\), with \(r\in\{0.375,0.5,0.625,0.75,0.875\}\), and sets
 
 \[
-s_n=s/2,\qquad s_t=s\sqrt{11/8}.
+s_n=rs,\qquad s_t=s\sqrt{\frac{3-r^2}{2}}.
 \]
 
-This keeps the total squared step budget constant:
+This keeps the squared step budget constant for every ratio:
 
 \[
-s_n^2+2s_t^2 = s^2/4 + 2(11s^2/8)=3s^2.
+s_n^2+2s_t^2 = r^2s^2+2\left(\frac{3-r^2}{2}s^2\right)=3s^2.
 \]
 
-So its theoretical per-step Euclidean rounding bound \(\sqrt{s_n^2+2s_t^2}/2\) matches the equal-step variant's bound. The normal component gets twice the quantization density while the tangential steps become larger. This does not guarantee a better actual file size or accumulated mesh error; the predictor is recursive, so the implementation still measures each decoded mesh's maximum vertex error and RMSE.
+The theoretical per-step Euclidean rounding bound \(\sqrt{s_n^2+2s_t^2}/2\) therefore matches the equal-step variant's bound. Smaller \(r\) gives finer normal quantization while allowing coarser tangent quantization. This does not guarantee a better actual file size or accumulated mesh error; the predictor is recursive, so each candidate is measured and only a candidate meeting the baseline's conservative maximum-error bound is eligible for selection.
 
-The variant is versioned as MO3D v5. It writes the three local-frame steps to the header so the decoder reproduces them exactly. The older v1–v4 streams remain supported. This is inspired by the non-uniform local-coordinate quantization explored in the tangent-space paper, but it is not a reproduction of their entropy coder or full rate-distortion optimization.
+The v5 header stores the three local-frame steps and the chosen normal-step ratio; decoders continue to support v1–v4. The implementation is inspired by the paper's non-uniform local-coordinate quantization, but it is not a reproduction of their entropy coder or full rate-distortion optimizer. The auto selector tests all five normal-step ratios across source, BFS and Morton ordering, alongside the other in-house coders. The benchmark also reports reconstruction error projected onto the decoder's local normal and tangent axes, to test whether extra normal precision actually improves the targeted component.
 
 ### Adaptive size selection
 
@@ -119,7 +119,7 @@ The \`auto\` encoder tests all four available coders under source, BFS, and Mort
 
 ## Next experiments
 
-1. Extend the five-coder/order study to real-world CAD, scan, and robotics meshes with redistribution rights.
+1. Extend the ratio-sweep benchmark to real-world CAD, scan, and robotics meshes with redistribution rights.
 2. Optimize Python stencil construction, local-frame calculation and residual coding; the tangent variants may save bytes but are much slower on larger fixtures.
 3. Evaluate angle-weighted prediction on boundary-heavy and irregular meshes; do not tune it only to our six synthetic fixtures.
 4. Add a Draco baseline at comparable distortion and with the same attribute set.
