@@ -138,7 +138,7 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 - `*_geometry_max_vertex_error` and `*_geometry_rmse_vertex_distance`: measured distortion for each coder.
 - `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the four in-house coders and three orderings for that mesh.
 - `adaptive_encode_sweep_estimate_ms`: sum of the in-house candidate median encode times, a rough estimate of the work an exhaustive search requires.
-- `draco_bytes`, `draco_max_vertex_error`, `draco_rmse_vertex_distance`, and encode/decode timings: Google Draco baseline via DracoPy, using the same nominal quantization-bit setting. Actual distortion may differ, so interpret size and error together.
+- `draco_bytes`, `draco_quantization_bits`, `draco_max_vertex_error`, `draco_rmse_vertex_distance`, and encode/decode timings: Google Draco via DracoPy. The benchmark sweeps several bit depths around the requested precision and selects the smallest Draco bitstream meeting the baseline's conservative per-mesh maximum-error bound. Actual error is reported alongside size.
 - `mo3d_source_to_encoded_ratio`: included as a rough exploratory signal only; **it is not a fair codec comparison**, because MO3D is lossy and drops attributes.
 - `geometry_max_vertex_error` / `geometry_rmse_vertex_distance`: distortion between corresponding source vertices and reconstructed vertices.
 - `topology_exact`: verifies triangle index connectivity is unchanged.
