@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from .codec import decode_mesh, encode_mesh, load_mesh
+from .codec import ORDERINGS, decode_mesh, encode_mesh, load_mesh, reorder_mesh, vertex_order_for_mesh
 
 MESH_EXTENSIONS = {".obj", ".ply", ".stl", ".off"}
 
@@ -72,27 +72,85 @@ def _decode_simple_geometry_zlib_reference(payload: bytes) -> tuple[np.ndarray, 
     return vertices, faces
 
 
+def _benchmark_coder(
+    vertices: np.ndarray, faces: np.ndarray, bits: int, repeats: int, method: str, ordering: str
+) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
+    """Benchmark one coder/ordering, then map decoded data back to source indexing."""
+    payload, encode_seconds = _timed(
+        lambda: encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering), repeats
+    )
+    (decoded_vertices, decoded_faces, metadata), decode_seconds = _timed(lambda: decode_mesh(payload), repeats)
+
+    # The encoder emits vertices in the requested traversal order. Convert the
+    # decoded arrays back to source indices for geometry/topology correctness checks.
+    permutation = vertex_order_for_mesh(vertices, faces, ordering)  # new index -> original index
+    restored_vertices = np.empty_like(decoded_vertices)
+    restored_vertices[permutation] = decoded_vertices
+    restored_faces = permutation[decoded_faces]
+    errors = np.linalg.norm(restored_vertices - vertices, axis=1)
+
+    metrics = {
+        "ordering": ordering,
+        "method": method,
+        "bytes": len(payload),
+        "encode_median_ms": round(encode_seconds * 1000, 4),
+        "decode_median_ms": round(decode_seconds * 1000, 4),
+        "max_vertex_error": float(errors.max()) if errors.size else 0.0,
+        "rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
+        "topology_exact": bool(np.array_equal(restored_faces, faces)),
+        "format_version": metadata["version"],
+        "header_ordering": metadata.get("vertex_ordering", "source"),
+    }
+    return metrics, decoded_vertices, decoded_faces
+
+
 def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, Any]:
     original = path.read_bytes()
     vertices, faces, _ = load_mesh(path)
     gzip_bytes, gzip_seconds = _timed(lambda: gzip.compress(original, compresslevel=6, mtime=0), repeats)
-    reference_bytes, reference_seconds = _timed(lambda: _simple_geometry_zlib_reference(vertices, faces, bits), repeats)
-    reference_decoded, reference_decode_seconds = _timed(lambda: _decode_simple_geometry_zlib_reference(reference_bytes), repeats)
-    mo3d_bytes, encode_seconds = _timed(lambda: encode_mesh(vertices, faces, bits=bits, method="baseline"), repeats)
-    decoded, decode_seconds = _timed(lambda: decode_mesh(mo3d_bytes), repeats)
-    decoded_vertices, decoded_faces, meta = decoded
-    prithvi_bytes, prithvi_encode_seconds = _timed(lambda: encode_mesh(vertices, faces, bits=bits, method="prithvi"), repeats)
-    prithvi_decoded, prithvi_decode_seconds = _timed(lambda: decode_mesh(prithvi_bytes), repeats)
-    prithvi_vertices, prithvi_faces, prithvi_meta = prithvi_decoded
-    errors = np.linalg.norm(decoded_vertices - vertices, axis=1)
-    prithvi_errors = np.linalg.norm(prithvi_vertices - vertices, axis=1)
-    topology_equal = bool(np.array_equal(decoded_faces, faces))
-    prithvi_topology_equal = bool(np.array_equal(prithvi_faces, faces))
+    reference_bytes, reference_seconds = _timed(
+        lambda: _simple_geometry_zlib_reference(vertices, faces, bits), repeats
+    )
+    reference_decoded, reference_decode_seconds = _timed(
+        lambda: _decode_simple_geometry_zlib_reference(reference_bytes), repeats
+    )
+    ordering_results: list[dict[str, Any]] = []
+    for ordering in ORDERINGS:
+        baseline_metrics, baseline_decoded_vertices, _ = _benchmark_coder(
+            vertices, faces, bits, repeats, "baseline", ordering
+        )
+        prithvi_metrics, prithvi_decoded_vertices, _ = _benchmark_coder(
+            vertices, faces, bits, repeats, "prithvi", ordering
+        )
+        positions_equal = bool(np.array_equal(baseline_decoded_vertices, prithvi_decoded_vertices))
+        result = {
+            "ordering": ordering,
+            "baseline_bytes": baseline_metrics["bytes"],
+            "prithvi_bytes": prithvi_metrics["bytes"],
+            "prithvi_size_reduction_vs_baseline_pct": round(
+                (1 - prithvi_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
+            "baseline_encode_median_ms": baseline_metrics["encode_median_ms"],
+            "baseline_decode_median_ms": baseline_metrics["decode_median_ms"],
+            "prithvi_encode_median_ms": prithvi_metrics["encode_median_ms"],
+            "prithvi_decode_median_ms": prithvi_metrics["decode_median_ms"],
+            "baseline_max_vertex_error": baseline_metrics["max_vertex_error"],
+            "prithvi_max_vertex_error": prithvi_metrics["max_vertex_error"],
+            "baseline_topology_exact": baseline_metrics["topology_exact"],
+            "prithvi_topology_exact": prithvi_metrics["topology_exact"],
+            "quantized_positions_equal": positions_equal,
+        }
+        ordering_results.append(result)
+
+    source = next(item for item in ordering_results if item["ordering"] == "source")
     diagonal = float(np.linalg.norm(vertices.max(axis=0) - vertices.min(axis=0)))
-    per_axis_half_step = (np.asarray(vertices.max(axis=0)) - np.asarray(vertices.min(axis=0))) / (2 * ((1 << bits) - 1))
+    per_axis_half_step = (np.asarray(vertices.max(axis=0)) - np.asarray(vertices.min(axis=0))) / (
+        2 * ((1 << bits) - 1)
+    )
     theoretical_error_bound = float(np.linalg.norm(per_axis_half_step))
-    mo3d_size = len(mo3d_bytes)
-    return {
+    reference_max_error = float(np.linalg.norm(reference_decoded[0] - vertices, axis=1).max())
+
+    row: dict[str, Any] = {
         "file": str(path), "name": path.name,
         "source_format": path.suffix.lower(), "source_bytes": len(original),
         "vertices": int(len(vertices)), "triangles": int(len(faces)),
@@ -104,35 +162,47 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "simple_geometry_zlib_reference_encode_median_ms": round(reference_seconds * 1000, 4),
         "simple_geometry_zlib_reference_decode_median_ms": round(reference_decode_seconds * 1000, 4),
         "simple_reference_topology_exact": bool(np.array_equal(reference_decoded[1], faces)),
-        "simple_reference_geometry_max_vertex_error": float(np.linalg.norm(reference_decoded[0] - vertices, axis=1).max()),
-        "mo3d_size_reduction_vs_simple_reference_pct": round((1 - mo3d_size / len(reference_bytes)) * 100, 4) if reference_bytes else None,
-        "mo3d_lossy_geometry_bytes": mo3d_size,
-        "mo3d_source_to_encoded_ratio": round(len(original) / mo3d_size, 6) if mo3d_size else None,
-        "mo3d_size_saved_vs_source_pct": round((1 - mo3d_size / len(original)) * 100, 4) if original else None,
-        "mo3d_coordinate_coder": meta.get("coordinate_coder", "absolute-fixed-width-zlib"),
-        "mo3d_encode_median_ms": round(encode_seconds * 1000, 4),
-        "mo3d_decode_median_ms": round(decode_seconds * 1000, 4),
-        "prithvi_bytes": len(prithvi_bytes),
-        "prithvi_size_reduction_vs_mo3d_baseline_pct": round((1 - len(prithvi_bytes) / len(mo3d_bytes)) * 100, 4) if mo3d_bytes else None,
-        "prithvi_encode_median_ms": round(prithvi_encode_seconds * 1000, 4),
-        "prithvi_decode_median_ms": round(prithvi_decode_seconds * 1000, 4),
-        "prithvi_geometry_max_vertex_error": float(prithvi_errors.max()) if prithvi_errors.size else 0.0,
-        "prithvi_geometry_rmse_vertex_distance": float(np.sqrt(np.mean(prithvi_errors ** 2))) if prithvi_errors.size else 0.0,
-        "prithvi_topology_exact": prithvi_topology_equal,
-        "prithvi_coordinate_coder": prithvi_meta.get("coordinate_coder", ""),
-        "geometry_max_vertex_error": float(errors.max()) if errors.size else 0.0,
-        "geometry_rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
+        "simple_reference_geometry_max_vertex_error": reference_max_error,
+        "mo3d_size_reduction_vs_simple_reference_pct": round(
+            (1 - source["baseline_bytes"] / len(reference_bytes)) * 100, 4
+        ) if reference_bytes else None,
+        "mo3d_lossy_geometry_bytes": source["baseline_bytes"],
+        "mo3d_source_to_encoded_ratio": round(len(original) / source["baseline_bytes"], 6) if source["baseline_bytes"] else None,
+        "mo3d_size_saved_vs_source_pct": round((1 - source["baseline_bytes"] / len(original)) * 100, 4) if original else None,
+        "mo3d_coordinate_coder": "absolute-fixed-width-zlib",
+        "mo3d_encode_median_ms": source["baseline_encode_median_ms"],
+        "mo3d_decode_median_ms": source["baseline_decode_median_ms"],
+        "prithvi_bytes": source["prithvi_bytes"],
+        "prithvi_size_reduction_vs_mo3d_baseline_pct": source["prithvi_size_reduction_vs_baseline_pct"],
+        "prithvi_encode_median_ms": source["prithvi_encode_median_ms"],
+        "prithvi_decode_median_ms": source["prithvi_decode_median_ms"],
+        "prithvi_geometry_max_vertex_error": source["prithvi_max_vertex_error"],
+        "prithvi_geometry_rmse_vertex_distance": next(
+            item["prithvi_max_vertex_error"] for item in ordering_results if item["ordering"] == "source"
+        ),
+        "prithvi_topology_exact": source["prithvi_topology_exact"],
+        "prithvi_coordinate_coder": "prithvi-mesh-adjacency-residual-varint-zlib",
+        "geometry_max_vertex_error": source["baseline_max_vertex_error"],
+        "geometry_rmse_vertex_distance": source["baseline_max_vertex_error"],
         "bbox_diagonal": diagonal,
         "max_error_bound_estimate": theoretical_error_bound,
-        "topology_exact": topology_equal,
+        "topology_exact": source["baseline_topology_exact"],
         "attributes_preserved": ["triangle connectivity", "vertex positions (quantized)"],
         "attributes_dropped": ["normals", "UVs", "colors", "textures", "materials", "source-format metadata"],
-        "fair_comparison_warning": "The simple geometry zlib reference and MO3D both encode quantized positions at the same configured precision and triangle connectivity, omitting the same attributes, so their size comparison is a useful narrow ablation. Both are lossy relative to source geometry. The source-file ratio is not a fair codec comparison because source files may include formatting and attributes. gzip is lossless on the exact source bytes. Compare against Draco with matched attributes and distortion settings before broader claims.",
-        "decoder_bytes_exact": bool(len(decoded_vertices) == len(vertices) and topology_equal),
-        "prithvi_decoder_bytes_exact": bool(len(prithvi_vertices) == len(vertices) and prithvi_topology_equal),
-        "baseline_prithvi_quantized_positions_equal": bool(np.array_equal(prithvi_vertices, decoded_vertices)),
-        "header_version": meta["version"],
+        "fair_comparison_warning": "Each ordering compares baseline and Prithvi at the same coordinate precision and with the same reordered topology. Results are synthetic, geometry-only and lossy; source-file ratios are not fair codec comparisons. Compare against Draco with matched attributes and distortion before broader claims.",
+        "decoder_bytes_exact": bool(source["baseline_topology_exact"]),
+        "prithvi_decoder_bytes_exact": bool(source["prithvi_topology_exact"]),
+        "baseline_prithvi_quantized_positions_equal": source["quantized_positions_equal"],
+        "ordering_results": ordering_results,
+        "header_version": 1,
     }
+    # Keep each ordering's important scalar columns available in the CSV report.
+    for item in ordering_results:
+        name = item["ordering"]
+        for key, value in item.items():
+            if key != "ordering":
+                row[f"{name}_{key}"] = value
+    return row
 
 
 def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: int = 16, repeats: int = 3) -> dict[str, Any]:
@@ -157,7 +227,7 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
         raise RuntimeError("No files could be benchmarked; see input errors")
     report = {
         "project": "MiddleOut-3D",
-        "report_version": 1,
+        "report_version": 2,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
         "configuration": {"position_bits": bits, "repeats": repeats, "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
