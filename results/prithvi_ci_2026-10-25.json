@@ -1,0 +1,106 @@
+{
+  "project": "MiddleOut-3D",
+  "experiment": "MO3D v1 absolute-coordinate baseline vs MO3D v2 Prithvi mesh-adjacency residual coder",
+  "generated_at_utc": "2026-10-25T00:53:27Z",
+  "source_workflow_run": "https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40148442164",
+  "source_commit": "b9fd98ff087c406b9e94e00c40639f5c2a40d791",
+  "environment": {
+    "ci": "GitHub Actions ubuntu-latest",
+    "python": "3.12"
+  },
+  "configuration": {
+    "position_bits_per_axis": 16,
+    "repeats": 5,
+    "timing_statistic": "median wall-clock ms",
+    "fixture_count": 6,
+    "fixtures": "deterministic synthetic meshes",
+    "warmup": "not explicitly separated"
+  },
+  "aggregate": {
+    "baseline_total_bytes": 61794,
+    "prithvi_total_bytes": 47274,
+    "total_size_reduction_pct": 23.4974,
+    "fixtures_smaller_with_prithvi": 4,
+    "fixtures_tested": 6
+  },
+  "results": [
+    {
+      "mesh": "box.obj",
+      "baseline_bytes": 492,
+      "prithvi_bytes": 593,
+      "size_reduction_vs_baseline_pct": -20.5285,
+      "baseline_encode_median_ms": 0.0576,
+      "baseline_decode_median_ms": 0.0414,
+      "prithvi_encode_median_ms": 0.1256,
+      "prithvi_decode_median_ms": 0.0734,
+      "topology_exact": true,
+      "max_vertex_error": 0
+    },
+    {
+      "mesh": "cylinder.obj",
+      "baseline_bytes": 1061,
+      "prithvi_bytes": 1078,
+      "size_reduction_vs_baseline_pct": -1.6023,
+      "baseline_encode_median_ms": 0.3117,
+      "baseline_decode_median_ms": 0.1757,
+      "prithvi_encode_median_ms": 0.4937,
+      "prithvi_decode_median_ms": 0.4022,
+      "topology_exact": true,
+      "max_vertex_error": 0.000010789757857428015
+    },
+    {
+      "mesh": "icosphere.obj",
+      "baseline_bytes": 30364,
+      "prithvi_bytes": 29499,
+      "size_reduction_vs_baseline_pct": 2.8488,
+      "baseline_encode_median_ms": 7.4798,
+      "baseline_decode_median_ms": 4.9114,
+      "prithvi_encode_median_ms": 11.4538,
+      "prithvi_decode_median_ms": 10.4092,
+      "topology_exact": true,
+      "max_vertex_error": 0.000024097681047868562
+    },
+    {
+      "mesh": "torus.obj",
+      "baseline_bytes": 3789,
+      "prithvi_bytes": 3611,
+      "size_reduction_vs_baseline_pct": 4.6978,
+      "baseline_encode_median_ms": 2.0227,
+      "baseline_decode_median_ms": 1.2499,
+      "prithvi_encode_median_ms": 3.317,
+      "prithvi_decode_median_ms": 3.0617,
+      "topology_exact": true,
+      "max_vertex_error": 0.00002736979485817932
+    },
+    {
+      "mesh": "uv_sphere.obj",
+      "baseline_bytes": 8311,
+      "prithvi_bytes": 7226,
+      "size_reduction_vs_baseline_pct": 13.055,
+      "baseline_encode_median_ms": 4.2355,
+      "baseline_decode_median_ms": 2.6924,
+      "prithvi_encode_median_ms": 6.7227,
+      "prithvi_decode_median_ms": 6.4531,
+      "topology_exact": true,
+      "max_vertex_error": 0.000025155006193323383
+    },
+    {
+      "mesh": "wavy_grid.obj",
+      "baseline_bytes": 17777,
+      "prithvi_bytes": 5267,
+      "size_reduction_vs_baseline_pct": 70.3718,
+      "baseline_encode_median_ms": 8.0416,
+      "baseline_decode_median_ms": 5.0642,
+      "prithvi_encode_median_ms": 12.7377,
+      "prithvi_decode_median_ms": 12.2156,
+      "topology_exact": true,
+      "max_vertex_error": 0.00002123839992192857
+    }
+  ],
+  "validation": {
+    "triangle_topology_exact_all": true,
+    "baseline_and_prithvi_reconstructed_quantized_vertices_equal": true,
+    "position_error_unchanged_at_same_quantization": true
+  },
+  "interpretation": "At 16 bits per axis, Prithvi reduced total bytes across this six-file synthetic fixture set by the reported aggregate percentage and was smaller on four fixtures, but larger on two. Prithvi encode/decode medians were slower than the baseline on every fixture in this Python prototype. This is not a comparison against Draco or LZ4 and must not be generalized beyond these fixtures."
+}
