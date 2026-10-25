@@ -404,7 +404,7 @@ def _tangent_residual_step(mins: np.ndarray, maxs: np.ndarray, bits: int) -> flo
 def _encode_tangent_coordinates(
     vertices: np.ndarray, quantized: np.ndarray, mins: np.ndarray, maxs: np.ndarray,
     faces: np.ndarray, bits: int, level: int, weighted: bool = False,
-    normal_fine: bool = False
+    normal_fine: bool = False, normal_step_ratio: float = 0.5
 ) -> tuple[bytes, float | np.ndarray, int]:
     """Encode locally framed parallelogram-prediction residuals as signed varints.
 
@@ -417,8 +417,11 @@ def _encode_tangent_coordinates(
     spans = maxs - mins
     base_step = _tangent_residual_step(mins, maxs, bits)
     if normal_fine:
-        tangent_step = base_step * np.sqrt(11.0 / 8.0)
-        steps = np.asarray([base_step * 0.5, tangent_step, tangent_step], dtype=np.float64)
+        if not np.isfinite(normal_step_ratio) or not 0.0 < normal_step_ratio <= 1.0:
+            raise CodecError("normal_step_ratio must be in the interval (0, 1]")
+        normal_step = base_step * normal_step_ratio
+        tangent_step = base_step * np.sqrt((3.0 - normal_step_ratio ** 2) / 2.0)
+        steps = np.asarray([normal_step, tangent_step, tangent_step], dtype=np.float64)
         step: float | np.ndarray = steps
     else:
         step = base_step
@@ -486,7 +489,7 @@ def _decode_tangent_coordinates(
     return reconstructed
 
 
-def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source") -> bytes:
+def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5) -> bytes:
     """Encode a triangle mesh as MO3D bytes.
 
     Args:
@@ -511,22 +514,28 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError(f"method must be one of: {', '.join(METHODS)}")
     if ordering not in ORDERINGS:
         raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
+    if not isinstance(normal_step_ratio, (int, float)) or isinstance(normal_step_ratio, bool) or not np.isfinite(normal_step_ratio) or not 0.0 < normal_step_ratio <= 1.0:
+        raise CodecError("normal_step_ratio must be in the interval (0, 1]")
     if method == "auto":
         best_payload = None
         best_key = None
+        normal_ratios = (0.375, 0.5, 0.625, 0.75, 0.875)
         for ordering_index, candidate_ordering in enumerate(ORDERINGS):
             for method_index, candidate_method in enumerate(CODEC_METHODS):
-                try:
-                    candidate = encode_mesh(
-                        vertices, faces, bits=bits, level=level,
-                        method=candidate_method, ordering=candidate_ordering
-                    )
-                except CodecError:
-                    continue
-                key = (len(candidate), method_index, ordering_index)
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_payload = candidate
+                candidate_ratios = normal_ratios if candidate_method == "normal_fine_tangent" else (float(normal_step_ratio),)
+                for ratio_index, candidate_ratio in enumerate(candidate_ratios):
+                    try:
+                        candidate = encode_mesh(
+                            vertices, faces, bits=bits, level=level,
+                            method=candidate_method, ordering=candidate_ordering,
+                            normal_step_ratio=candidate_ratio
+                        )
+                    except CodecError:
+                        continue
+                    key = (len(candidate), method_index, ordering_index, ratio_index)
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best_payload = candidate
         if best_payload is None:
             raise CodecError("no available encoder could encode this mesh")
         return best_payload
@@ -542,7 +551,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         normal_fine = method == "normal_fine_tangent"
         coord_stream, tangent_step, tangent_predictive_vertices = _encode_tangent_coordinates(
             vertices, quantized, mins, maxs, faces, bits, level,
-            weighted=weighted, normal_fine=normal_fine
+            weighted=weighted, normal_fine=normal_fine, normal_step_ratio=float(normal_step_ratio)
         )
         coordinate_coder = (
             "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib"
@@ -570,6 +579,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "tangent_residual_step": float(tangent_step) if np.isscalar(tangent_step) else None,
         "tangent_residual_steps": tangent_step.tolist() if isinstance(tangent_step, np.ndarray) else None,
         "tangent_predictive_vertices": tangent_predictive_vertices,
+        "normal_step_ratio": float(tangent_step[0] / _tangent_residual_step(mins, maxs, bits)) if method == "normal_fine_tangent" and isinstance(tangent_step, np.ndarray) else None,
         "coordinate_coder": coordinate_coder,
         "position_quantization": "uniform per axis, bounding-box normalized",
         "topology": "triangles, delta indices with zigzag varints, zlib",
@@ -709,9 +719,9 @@ def load_mesh(path: str | Path) -> tuple[np.ndarray, np.ndarray, Any]:
     return vertices, faces, loaded
 
 
-def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline", ordering: str = "source") -> dict[str, Any]:
+def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline", ordering: str = "source", normal_step_ratio: float = 0.5) -> dict[str, Any]:
     vertices, faces, _ = load_mesh(input_path)
-    encoded = encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering)
+    encoded = encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering, normal_step_ratio=normal_step_ratio)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(encoded)
@@ -728,9 +738,12 @@ def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16,
         }
         actual_method = coder_to_method[metadata["coordinate_coder"]]
         actual_ordering = metadata.get("vertex_ordering", "source")
+    _, _, encoded_metadata = decode_mesh(encoded)
+    actual_normal_step_ratio = encoded_metadata.get("normal_step_ratio")
     return {"input": str(input_path), "output": str(output_path), "input_bytes": Path(input_path).stat().st_size,
             "output_bytes": len(encoded), "ratio": Path(input_path).stat().st_size / len(encoded),
             "position_bits": bits, "requested_method": method, "method": actual_method, "ordering": actual_ordering,
+            "normal_step_ratio": actual_normal_step_ratio,
             "vertices": len(vertices), "faces": len(faces)}
 
 
