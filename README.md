@@ -82,7 +82,7 @@ s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 
 and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, and Morton orderings and tests five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, Morton, and predictive orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 44 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -203,7 +203,7 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 ## GitHub Actions
 
 - **Tests** run on pushes, pull requests, and manual dispatch across Python 3.10, 3.12, and 3.13. The workflow runs unit tests and CLI encode/decode smoke tests.
-- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It installs the optional DracoPy package, compares all four in-house coders under source, BFS, and Morton orderings against Google Draco, checks topology and in-house error bounds, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
+- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It installs the optional DracoPy package, compares all seven in-house coders under source, BFS, Morton, and predictive orderings against Google Draco, checks topology and in-house error bounds, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
 
 ## Research roadmap
 
