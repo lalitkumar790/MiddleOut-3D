@@ -1,0 +1,362 @@
+{
+  "project": "MiddleOut-3D",
+  "experiment": "MO3D v5 normal-fine tangent residual quantization ratio sweep",
+  "generated_at_utc": "2026-10-25T07:10:22Z",
+  "workflow_run": "https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40171561366",
+  "source_commit": "7e5767f8aa0e285d40cc7097dd174d001cc11260",
+  "environment": {
+    "python": "3.12.15",
+    "numpy": "2.5.4",
+    "DracoPy": "2.0.0",
+    "runner": "GitHub Actions ubuntu-latest"
+  },
+  "configuration": {
+    "bits_per_axis": 16,
+    "repeats": 5,
+    "meshes": 6,
+    "orderings": [
+      "source",
+      "bfs",
+      "morton"
+    ],
+    "normal_step_ratios": [
+      0.375,
+      0.5,
+      0.625,
+      0.75,
+      0.875
+    ],
+    "draco_quantization_bits_tested": [
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "draco_selection": "smallest payload meeting each mesh/order baseline max-vertex-error bound"
+  },
+  "aggregate_by_ordering": [
+    {
+      "ordering": "source",
+      "baseline_bytes": 62652,
+      "prithvi_bytes": 48132,
+      "tangent_bytes": 49044,
+      "weighted_tangent_bytes": 53828,
+      "normal_fine_bytes": 54259,
+      "draco_bytes": 28275,
+      "normal_fine_size_change_vs_weighted_pct": 0.8007,
+      "normal_rmse_change_vs_weighted_pct": -22.39,
+      "tangential_rmse_change_vs_weighted_pct": 9.51
+    },
+    {
+      "ordering": "bfs",
+      "baseline_bytes": 50330,
+      "prithvi_bytes": 37041,
+      "tangent_bytes": 36077,
+      "weighted_tangent_bytes": 41869,
+      "normal_fine_bytes": 42297,
+      "draco_bytes": 28275,
+      "normal_fine_size_change_vs_weighted_pct": 1.0222,
+      "normal_rmse_change_vs_weighted_pct": -19.08,
+      "tangential_rmse_change_vs_weighted_pct": 8.93
+    },
+    {
+      "ordering": "morton",
+      "baseline_bytes": 80383,
+      "prithvi_bytes": 70430,
+      "tangent_bytes": 70387,
+      "weighted_tangent_bytes": 76483,
+      "normal_fine_bytes": 77054,
+      "draco_bytes": 28275,
+      "normal_fine_size_change_vs_weighted_pct": 0.7466,
+      "normal_rmse_change_vs_weighted_pct": -29.8,
+      "tangential_rmse_change_vs_weighted_pct": 12.29
+    }
+  ],
+  "best_adaptive_total_bytes": 25807,
+  "source_order_baseline_total_bytes": 62652,
+  "error_budgeted_draco_total_bytes": 28275,
+  "adaptive_savings_vs_source_baseline_pct": 58.809,
+  "adaptive_savings_vs_draco_bytes_pct": 8.729,
+  "adaptive_per_mesh": [
+    {
+      "mesh": "box.obj",
+      "method": "baseline",
+      "ordering": "bfs",
+      "bytes": 630
+    },
+    {
+      "mesh": "cylinder.obj",
+      "method": "tangent",
+      "ordering": "source",
+      "bytes": 1072
+    },
+    {
+      "mesh": "icosphere.obj",
+      "method": "tangent",
+      "ordering": "bfs",
+      "bytes": 11746
+    },
+    {
+      "mesh": "torus.obj",
+      "method": "weighted_tangent",
+      "ordering": "source",
+      "bytes": 2486
+    },
+    {
+      "mesh": "uv_sphere.obj",
+      "method": "weighted_tangent",
+      "ordering": "bfs",
+      "bytes": 4463
+    },
+    {
+      "mesh": "wavy_grid.obj",
+      "method": "prithvi",
+      "ordering": "source",
+      "bytes": 5410
+    }
+  ],
+  "normal_fine_candidates": [
+    {
+      "mesh": "box.obj",
+      "ordering": "source",
+      "weighted_bytes": 738,
+      "normal_fine_bytes": 819,
+      "size_delta_vs_weighted_pct": 10.976,
+      "selected_normal_step_ratio": 0.5,
+      "normal_component_rmse": 4.530879e-7,
+      "tangential_component_rmse": 0.0000073696734,
+      "max_vertex_error": 0.0000085041531,
+      "max_error_budget": 0.000013214701,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "box.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 731,
+      "normal_fine_bytes": 814,
+      "size_delta_vs_weighted_pct": 11.354,
+      "selected_normal_step_ratio": 0.5,
+      "normal_component_rmse": 4.530879e-7,
+      "tangential_component_rmse": 0.0000073696734,
+      "max_vertex_error": 0.0000085041531,
+      "max_error_budget": 0.000013214701,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "box.obj",
+      "ordering": "morton",
+      "weighted_bytes": 747,
+      "normal_fine_bytes": 830,
+      "size_delta_vs_weighted_pct": 11.111,
+      "selected_normal_step_ratio": 0.375,
+      "normal_component_rmse": 0,
+      "tangential_component_rmse": 0.0000076702232,
+      "max_vertex_error": 0.000010104633,
+      "max_error_budget": 0.000013214701,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "cylinder.obj",
+      "ordering": "source",
+      "weighted_bytes": 1073,
+      "normal_fine_bytes": 1143,
+      "size_delta_vs_weighted_pct": 6.524,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 6.5317366e-7,
+      "tangential_component_rmse": 0.0000099956621,
+      "max_vertex_error": 0.000014534463,
+      "max_error_budget": 0.000018688409,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "cylinder.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 1105,
+      "normal_fine_bytes": 1167,
+      "size_delta_vs_weighted_pct": 5.611,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 3.7134093e-7,
+      "tangential_component_rmse": 0.0000087801885,
+      "max_vertex_error": 0.000014913322,
+      "max_error_budget": 0.000018688409,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "cylinder.obj",
+      "ordering": "morton",
+      "weighted_bytes": 1310,
+      "normal_fine_bytes": 1379,
+      "size_delta_vs_weighted_pct": 5.267,
+      "selected_normal_step_ratio": 0.375,
+      "normal_component_rmse": 4.3517191e-7,
+      "tangential_component_rmse": 0.0000095408939,
+      "max_vertex_error": 0.000015902667,
+      "max_error_budget": 0.000018688409,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "icosphere.obj",
+      "ordering": "source",
+      "weighted_bytes": 27464,
+      "normal_fine_bytes": 27543,
+      "size_delta_vs_weighted_pct": 0.288,
+      "selected_normal_step_ratio": 0.875,
+      "normal_component_rmse": 0.0000077507912,
+      "tangential_component_rmse": 0.000013120464,
+      "max_vertex_error": 0.000024219651,
+      "max_error_budget": 0.000026429401,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "icosphere.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 12803,
+      "normal_fine_bytes": 12900,
+      "size_delta_vs_weighted_pct": 0.758,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 0.0000065968957,
+      "tangential_component_rmse": 0.00001369496,
+      "max_vertex_error": 0.000024931888,
+      "max_error_budget": 0.000026429401,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "icosphere.obj",
+      "ordering": "morton",
+      "weighted_bytes": 22195,
+      "normal_fine_bytes": 22260,
+      "size_delta_vs_weighted_pct": 0.293,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 0.0000065806217,
+      "tangential_component_rmse": 0.000013747332,
+      "max_vertex_error": 0.000025683782,
+      "max_error_budget": 0.000026429401,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "torus.obj",
+      "ordering": "source",
+      "weighted_bytes": 2486,
+      "normal_fine_bytes": 2534,
+      "size_delta_vs_weighted_pct": 1.931,
+      "selected_normal_step_ratio": 0.875,
+      "normal_component_rmse": 0.0000082881128,
+      "tangential_component_rmse": 0.000014030163,
+      "max_vertex_error": 0.000027698197,
+      "max_error_budget": 0.000028413291,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "torus.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 3721,
+      "normal_fine_bytes": 3787,
+      "size_delta_vs_weighted_pct": 1.774,
+      "selected_normal_step_ratio": 0.875,
+      "normal_component_rmse": 0.0000085097752,
+      "tangential_component_rmse": 0.000014395669,
+      "max_vertex_error": 0.000027369795,
+      "max_error_budget": 0.000028413291,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "torus.obj",
+      "ordering": "morton",
+      "weighted_bytes": 6663,
+      "normal_fine_bytes": 6747,
+      "size_delta_vs_weighted_pct": 1.261,
+      "selected_normal_step_ratio": 0.625,
+      "normal_component_rmse": 0.0000058087112,
+      "tangential_component_rmse": 0.00001545018,
+      "max_vertex_error": 0.000026547676,
+      "max_error_budget": 0.000028413291,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "uv_sphere.obj",
+      "ordering": "source",
+      "weighted_bytes": 4971,
+      "normal_fine_bytes": 5010,
+      "size_delta_vs_weighted_pct": 0.785,
+      "selected_normal_step_ratio": 0.625,
+      "normal_component_rmse": 0.000005500228,
+      "tangential_component_rmse": 0.000014149137,
+      "max_vertex_error": 0.000025362475,
+      "max_error_budget": 0.000026415114,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "uv_sphere.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 4463,
+      "normal_fine_bytes": 4539,
+      "size_delta_vs_weighted_pct": 1.703,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 0.0000066813468,
+      "tangential_component_rmse": 0.000013706582,
+      "max_vertex_error": 0.000024915581,
+      "max_error_budget": 0.000026415114,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "uv_sphere.obj",
+      "ordering": "morton",
+      "weighted_bytes": 13218,
+      "normal_fine_bytes": 13371,
+      "size_delta_vs_weighted_pct": 1.158,
+      "selected_normal_step_ratio": 0.625,
+      "normal_component_rmse": 0.0000054784188,
+      "tangential_component_rmse": 0.000014366727,
+      "max_vertex_error": 0.000024639188,
+      "max_error_budget": 0.000026415114,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "wavy_grid.obj",
+      "ordering": "source",
+      "weighted_bytes": 17096,
+      "normal_fine_bytes": 17210,
+      "size_delta_vs_weighted_pct": 0.667,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 0.0000054510209,
+      "tangential_component_rmse": 0.000011219023,
+      "max_vertex_error": 0.000020903161,
+      "max_error_budget": 0.000021700132,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "wavy_grid.obj",
+      "ordering": "bfs",
+      "weighted_bytes": 19046,
+      "normal_fine_bytes": 19090,
+      "size_delta_vs_weighted_pct": 0.231,
+      "selected_normal_step_ratio": 0.875,
+      "normal_component_rmse": 0.0000063434524,
+      "tangential_component_rmse": 0.000010838587,
+      "max_vertex_error": 0.00002081062,
+      "max_error_budget": 0.000021700132,
+      "error_budget_met": true
+    },
+    {
+      "mesh": "wavy_grid.obj",
+      "ordering": "morton",
+      "weighted_bytes": 32350,
+      "normal_fine_bytes": 32467,
+      "size_delta_vs_weighted_pct": 0.362,
+      "selected_normal_step_ratio": 0.75,
+      "normal_component_rmse": 0.0000054356731,
+      "tangential_component_rmse": 0.000011307853,
+      "max_vertex_error": 0.000021120524,
+      "max_error_budget": 0.000021700132,
+      "error_budget_met": true
+    }
+  ],
+  "validation": {
+    "ci_benchmark_success": true,
+    "all_18_error_budgets_met": true,
+    "all_18_topology_checks_passed": true,
+    "benchmark_errors": []
+  },
+  "conclusion": "The normal-fine variant reduced local normal-component RMSE by about 19–30% relative to the equal-step weighted tangent coder, while tangential-component RMSE rose about 9–12%. It was about 0.75–1.02% larger in aggregate than weighted tangent for each ordering. It is a targeted rate-distortion trade-off, not a total-size win. On these synthetic meshes, adaptive MO3D encoded to 25,807 bytes versus 28,275 bytes for Draco selected under the same per-mesh conservative max-error ceiling, but Draco was substantially faster and often had lower actual reconstruction error. These results do not establish a general win over Draco."
+}
