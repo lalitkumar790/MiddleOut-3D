@@ -1,3 +1,11 @@
+## 0.6.0 — Predictive-cost-guided ordering experiment
+
+- Added an experimental `predictive` vertex ordering that greedily prioritizes available vertices with lower estimated local residual-varint cost.
+- Extended traversal tests to cover predictive ordering in permutation validity, remapped-face correctness, and round-trip checks across the in-house coders.
+- Expanded CI benchmark coverage to compare predictive ordering against source, BFS and Morton, with Draco under the same per-mesh error target.
+- Documented its connection to pattern ordering as a modern hypothesis only; no claim is made that the method appears in Vedic or Desika-era texts.
+- The new order is experimental and should only be retained if its complete file sizes and runtime justify the added search cost.
+
 # Changelog
 
 ## 0.5.0 — Adaptive Chandas block coding
