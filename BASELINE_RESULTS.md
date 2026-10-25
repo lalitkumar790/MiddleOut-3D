@@ -3,7 +3,7 @@
 **Run date:** 25 October 2026  
 **Environment:** GitHub Actions `ubuntu-latest`, Python 3.12  
 **Configuration:** 16 position bits per axis; median of 5 encode/decode runs; six deterministic synthetic meshes.  
-**Run:** [GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40148442164)  
+**Run:** [GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40148648174)  
 **Snapshot:** [JSON](results/prithvi_ci_2026-10-25.json) · [CSV](results/prithvi_ci_2026-10-25.csv)
 
 ## Summary
@@ -18,12 +18,12 @@ This is an initial synthetic-data result, not evidence of superiority over Draco
 
 | Fixture | Baseline bytes | Prithvi bytes | Size reduction vs baseline | Baseline encode / decode (ms) | Prithvi encode / decode (ms) | Topology exact | Max vertex error |
 |---|---:|---:|---:|---:|---:|:---:|---:|
-| `box.obj` | 492 | 593 | -20.5285% | 0.0576 / 0.0414 | 0.1256 / 0.0734 | Yes | 0 |
-| `cylinder.obj` | 1,061 | 1,078 | -1.6023% | 0.3117 / 0.1757 | 0.4937 / 0.4022 | Yes | 1.0790e-05 |
-| `icosphere.obj` | 30,364 | 29,499 | 2.8488% | 7.4798 / 4.9114 | 11.4538 / 10.4092 | Yes | 2.4098e-05 |
-| `torus.obj` | 3,789 | 3,611 | 4.6978% | 2.0227 / 1.2499 | 3.3170 / 3.0617 | Yes | 2.7370e-05 |
-| `uv_sphere.obj` | 8,311 | 7,226 | 13.0550% | 4.2355 / 2.6924 | 6.7227 / 6.4531 | Yes | 2.5155e-05 |
-| `wavy_grid.obj` | 17,777 | 5,267 | 70.3718% | 8.0416 / 5.0642 | 12.7377 / 12.2156 | Yes | 2.1238e-05 |
+| `box.obj` | 492 | 593 | -20.5285% | 0.0709 / 0.0510 | 0.1666 / 0.0861 | Yes | 0 |
+| `cylinder.obj` | 1,061 | 1,078 | -1.6023% | 0.3806 / 0.1955 | 0.6265 / 0.4528 | Yes | 1.0790e-05 |
+| `icosphere.obj` | 30,364 | 29,499 | 2.8488% | 10.1322 / 5.2191 | 15.6397 / 12.2187 | Yes | 2.4098e-05 |
+| `torus.obj` | 3,789 | 3,611 | 4.6978% | 2.6955 / 1.3539 | 4.3751 / 3.6311 | Yes | 2.7370e-05 |
+| `uv_sphere.obj` | 8,311 | 7,226 | 13.0550% | 5.7345 / 2.8872 | 8.9796 / 7.8309 | Yes | 2.5155e-05 |
+| `wavy_grid.obj` | 17,777 | 5,267 | 70.3718% | 11.1803 / 5.2405 | 17.2841 / 14.1876 | Yes | 2.1238e-05 |
 
 Negative size reduction means Prithvi produced a larger file. Wall-clock measurements are from a shared hosted runner and should be treated as indicative, not universal performance numbers.
 
