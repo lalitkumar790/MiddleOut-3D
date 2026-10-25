@@ -5,7 +5,7 @@ import numpy as np
 import trimesh
 
 from middleout3d.codec import (
-    AUTO_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
+    AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
     _encode_chandas_sparse_signed, _decode_chandas_sparse_signed,
 )
 
@@ -329,6 +329,46 @@ class CodecTests(unittest.TestCase):
         payload = encode_mesh(vertices, faces, method="auto")
         _, _, header = decode_mesh(payload)
         self.assertEqual(header["coordinate_coder"], "absolute-fixed-width-zlib")
+
+    @staticmethod
+    def _canonical_faces(faces):
+        canonical = []
+        for face in np.asarray(faces, dtype=np.int64):
+            a, b, c = (int(x) for x in face)
+            canonical.append(min((a, b, c), (b, c, a), (c, a, b)))
+        return sorted(canonical)
+
+    def test_bfs_face_ordering_preserves_oriented_triangle_topology(self):
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_adaptive_tangent")
+        for vertex_ordering in ("source", "bfs", "morton"):
+            ordered_vertices, ordered_faces, _ = reorder_mesh(
+                self.vertices, self.faces, vertex_ordering
+            )
+            for face_ordering in FACE_ORDERINGS:
+                for method in methods:
+                    with self.subTest(vertex_ordering=vertex_ordering, face_ordering=face_ordering, method=method):
+                        payload = encode_mesh(
+                            self.vertices, self.faces, bits=16, method=method,
+                            ordering=vertex_ordering, face_ordering=face_ordering
+                        )
+                        decoded_vertices, decoded_faces, header = decode_mesh(payload)
+                        self.assertEqual(header.get("face_ordering", "source"), face_ordering)
+                        self.assertEqual(
+                            self._canonical_faces(decoded_faces),
+                            self._canonical_faces(ordered_faces),
+                        )
+                        max_error = float(
+                            np.linalg.norm(decoded_vertices - ordered_vertices, axis=1).max()
+                        )
+                        error_bound = float(np.linalg.norm(
+                            (ordered_vertices.max(axis=0) - ordered_vertices.min(axis=0))
+                            / (2 * ((1 << 16) - 1))
+                        ))
+                        self.assertLessEqual(max_error, error_bound * 1.0001 + 1e-12)
+
+    def test_invalid_face_ordering_rejected(self):
+        with self.assertRaises(CodecError):
+            encode_mesh(self.vertices, self.faces, face_ordering="spiral")
 
     def test_legacy_v1_header_without_new_coder_fields_still_decodes(self):
         payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
