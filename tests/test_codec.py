@@ -128,6 +128,58 @@ class CodecTests(unittest.TestCase):
         with self.assertRaises(CodecError):
             encode_mesh(vertices, faces, method="tangent")
 
+    def test_weighted_tangent_roundtrip_across_orderings(self):
+        levels = (1 << 16) - 1
+        diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        error_bound = diagonal / (2 * levels)
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=16, method="weighted_tangent", ordering=ordering
+                )
+                vertices, faces, header = decode_mesh(payload)
+                restored_vertices = np.empty_like(vertices)
+                restored_vertices[order] = vertices
+                restored_faces = order[faces]
+                errors = np.linalg.norm(restored_vertices - self.vertices, axis=1)
+
+                self.assertEqual(header["version"], 4)
+                self.assertEqual(header["coordinate_coder"], "weighted-tangent-parallelogram-residual-varint-zlib")
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 4]))
+                self.assertTrue(np.array_equal(restored_faces, self.faces))
+                self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
+
+    def test_auto_mode_selects_smallest_of_all_coder_ordering_candidates(self):
+        bits = 16
+        candidates = [
+            encode_mesh(self.vertices, self.faces, bits=bits, method=method, ordering=ordering)
+            for ordering in ("source", "bfs", "morton")
+            for method in ("baseline", "prithvi", "tangent", "weighted_tangent")
+        ]
+        automatic = encode_mesh(self.vertices, self.faces, bits=bits, method="auto")
+        vertices, faces, header = decode_mesh(automatic)
+        self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
+        self.assertTrue(np.array_equal(faces.shape, np.asarray(self.faces.shape)))
+        self.assertEqual(header["vertex_ordering"] in ("source", "bfs", "morton"), True)
+        self.assertIn(
+            header["coordinate_coder"],
+            (
+                "absolute-fixed-width-zlib",
+                "prithvi-mesh-adjacency-residual-varint-zlib",
+                "tangent-parallelogram-residual-varint-zlib",
+                "weighted-tangent-parallelogram-residual-varint-zlib",
+            ),
+        )
+        self.assertEqual(len(vertices), len(self.vertices))
+
+    def test_auto_mode_falls_back_when_predictive_methods_are_not_applicable(self):
+        vertices = np.zeros((3, 3), dtype=np.float64)
+        faces = np.array([[0, 1, 2]], dtype=np.int64)
+        payload = encode_mesh(vertices, faces, method="auto")
+        _, _, header = decode_mesh(payload)
+        self.assertEqual(header["coordinate_coder"], "absolute-fixed-width-zlib")
+
     def test_legacy_v1_header_without_new_coder_fields_still_decodes(self):
         payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
         header_length = struct.unpack(">I", payload[5:9])[0]
