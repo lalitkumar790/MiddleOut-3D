@@ -309,7 +309,7 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
     return quantized, mins, maxs
 
 
-ORDERINGS = ("source", "bfs", "morton")
+ORDERINGS = ("source", "bfs", "morton", "predictive")
 
 
 def _morton_spread_21(values: np.ndarray) -> np.ndarray:
@@ -323,6 +323,137 @@ def _morton_spread_21(values: np.ndarray) -> np.ndarray:
     return x
 
 
+def _predictive_vertex_order(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Greedily order vertices by estimated local predictor residual cost.
+
+    This is a modern uncertainty/cost-guided traversal heuristic. At every step,
+    among vertices that have a causal triangle-parallelogram stencil entirely
+    inside the already-visited set, prefer the vertex with the smallest estimated
+    residual-varint cost. Candidate stencils are enumerated from shared edges;
+    if no candidate is ready, a new face/component is seeded deterministically.
+    """
+    from collections import defaultdict
+    import heapq
+
+    count = len(vertices)
+    edge_opposites: dict[tuple[int, int], list[int]] = defaultdict(list)
+    valid_faces = []
+    for tri in faces:
+        a, b, c = (int(x) for x in tri)
+        if len({a, b, c}) != 3:
+            continue
+        valid_faces.append((a, b, c))
+        for u, v, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            edge = (u, v) if u < v else (v, u)
+            edge_opposites[edge].append(opposite)
+
+    candidates: list[list[tuple[int, int, int]]] = [[] for _ in range(count)]
+    anchor_targets: list[set[int]] = [set() for _ in range(count)]
+    for (left, right), raw_opposites in edge_opposites.items():
+        opposites = sorted(set(raw_opposites))
+        for target in opposites:
+            for base in opposites:
+                if target == base or base in (left, right):
+                    continue
+                stencil = (left, right, base)
+                candidates[target].append(stencil)
+                for anchor in stencil:
+                    anchor_targets[anchor].add(target)
+    candidates = [sorted(set(options)) for options in candidates]
+
+    mins = vertices.min(axis=0)
+    maxs = vertices.max(axis=0)
+    try:
+        step = _tangent_residual_step(mins, maxs, 16)
+    except (NameError, CodecError, FloatingPointError):
+        step = max(float(np.linalg.norm(maxs - mins)), 1.0) / (np.sqrt(3.0) * 65535.0)
+    valences = _vertex_valences(faces, count)
+
+    def estimate_cost(target: int, stencil: tuple[int, int, int]) -> tuple[int, float, int, tuple[int, int, int]]:
+        left_i, right_i, base_i = stencil
+        left, right, base = vertices[left_i], vertices[right_i], vertices[base_i]
+        predictions = [
+            left + right - base,
+            _weighted_parallelogram_prediction(left, right, base, left_i, right_i, target, valences),
+        ]
+        best_key = None
+        for predictor_id, prediction in enumerate(predictions):
+            try:
+                frame = _local_tangent_frame(left, right, base, prediction)
+                local_residual = frame.T @ (vertices[target] - prediction)
+                codes = np.rint(local_residual / step).astype(np.int64)
+                cost = sum(len(_encode_varint(_zigzag_encode(int(value)))) for value in codes)
+                error = float(np.linalg.norm(vertices[target] - prediction))
+                key = (cost, error, predictor_id, stencil)
+            except (FloatingPointError, ValueError, OverflowError):
+                continue
+            if best_key is None or key < best_key:
+                best_key = key
+        if best_key is None:
+            return (10**9, float("inf"), 0, stencil)
+        return best_key
+
+    visited = np.zeros(count, dtype=bool)
+    order: list[int] = []
+    versions = np.zeros(count, dtype=np.int64)
+    heap: list[tuple[int, float, int, tuple[int, int, int], int]] = []
+
+    def visit(vertex: int) -> None:
+        if visited[vertex]:
+            return
+        visited[vertex] = True
+        order.append(vertex)
+        for target in sorted(anchor_targets[vertex]):
+            if visited[target]:
+                continue
+            ready = [
+                stencil for stencil in candidates[target]
+                if all(visited[anchor] for anchor in stencil)
+            ]
+            if not ready:
+                continue
+            best = min(estimate_cost(target, stencil) for stencil in ready)
+            versions[target] += 1
+            heapq.heappush(heap, (*best, int(versions[target]), target))
+
+    # Start with a large, non-degenerate face where possible, creating a stable
+    # local frame. Area is only a tie-breaker against input-order dependence.
+    seed_face = None
+    seed_key = None
+    for face_index, tri in enumerate(valid_faces):
+        a, b, c = tri
+        area2 = float(np.linalg.norm(np.cross(vertices[b] - vertices[a], vertices[c] - vertices[a])))
+        key = (area2, -face_index)
+        if seed_key is None or key > seed_key:
+            seed_key, seed_face = key, tri
+    if seed_face is not None:
+        for vertex in seed_face:
+            visit(vertex)
+
+    while len(order) < count:
+        while heap:
+            cost, error, predictor_id, stencil, version, target = heapq.heappop(heap)
+            if visited[target] or version != versions[target]:
+                continue
+            visit(target)
+            break
+        else:
+            unseen_faces = []
+            for face_index, tri in enumerate(valid_faces):
+                missing = [v for v in tri if not visited[v]]
+                if missing:
+                    a, b, c = tri
+                    area2 = float(np.linalg.norm(np.cross(vertices[b] - vertices[a], vertices[c] - vertices[a])))
+                    unseen_faces.append((len(missing), area2, -face_index, missing))
+            if unseen_faces:
+                _, _, _, missing = max(unseen_faces, key=lambda item: (item[0], item[1], item[2]))
+                visit(min(missing))
+            else:
+                # Vertices unused by any valid triangle must still be represented.
+                visit(int(np.flatnonzero(~visited)[0]))
+    return np.asarray(order, dtype=np.int64)
+
+
 def vertex_order_for_mesh(vertices: Any, faces: Any, ordering: str = "source") -> np.ndarray:
     """Return new-index -> original-index vertex permutation."""
     vertices, faces = _validate_mesh(vertices, faces)
@@ -331,6 +462,8 @@ def vertex_order_for_mesh(vertices: Any, faces: Any, ordering: str = "source") -
     count = len(vertices)
     if ordering == "source":
         return np.arange(count, dtype=np.int64)
+    if ordering == "predictive":
+        return _predictive_vertex_order(vertices, faces)
     if ordering == "morton":
         mins = vertices.min(axis=0)
         spans = vertices.max(axis=0) - mins
