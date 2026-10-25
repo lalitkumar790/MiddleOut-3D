@@ -42,13 +42,13 @@ jobs:
         run: python -m middleout3d generate-fixtures --out samples
       - name: Run baseline, Prithvi, tangent, weighted tangent, and adaptive comparison across orderings
         run: |
-          python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '5' }}"
+          python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '1' }}"
       - name: Print per-mesh comparison summary
         run: |
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | order | baseline B | weighted B | Chandas B | adaptive Chandas B | adaptive save vs weighted % | NF ratio | Draco B | Draco bits | error target met | adaptive best")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | normal-fine B | Chandas B | adaptive Chandas B | adaptive save vs weighted % | NF ratio | Draco B | Draco bits | error target met | best in-house method/order/bytes")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
