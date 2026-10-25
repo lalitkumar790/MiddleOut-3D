@@ -207,7 +207,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
 
     header = {
         "format": "MO3D",
-        "version": 1,
+        "version": 2 if method == "prithvi" else 1,
         "position_bits": bits,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
@@ -239,8 +239,9 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         header = json.loads(payload[start:start + header_len].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CodecError("invalid metadata header") from exc
-    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") != 1:
+    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2):
         raise CodecError("unsupported MO3D format version")
+    version = header["version"]
     bits = header.get("position_bits")
     vertex_count = header.get("vertex_count")
     face_count = header.get("face_count")
@@ -276,6 +277,10 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         raise CodecError("invalid bounding box metadata")
 
     coder = header.get("coordinate_coder", "absolute-fixed-width-zlib")
+    if version == 1 and coder != "absolute-fixed-width-zlib":
+        raise CodecError("non-baseline coordinate coding requires MO3D format version 2")
+    if version == 2 and coder != "prithvi-mesh-adjacency-residual-varint-zlib":
+        raise CodecError("MO3D format version 2 requires the Prithvi residual coordinate coder")
     if coder == "absolute-fixed-width-zlib":
         dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         expected_coord_bytes = vertex_count * 3 * dtype.itemsize
