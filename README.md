@@ -82,14 +82,14 @@ s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 
 and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, Morton, and predictive orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 44 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` tests seven single-setting in-house coders under source, BFS, and Morton orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The separate predictive ordering remains experimental and is excluded from `auto` because its first benchmark was larger and slower. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
 - **morton:** deterministic 3D Morton/Z-order traversal, sorting vertices by a spatial locality code.
 - **predictive:** greedy traversal that prioritizes vertices with the smallest estimated local predictor-residual cost. This is a new heuristic, not an established Vedic algorithm; benchmark results decide whether it stays.
 
-The encoder remaps triangle indices consistently, so each traversal represents the same surface. With BFS or Morton, the decoded mesh uses the selected reordered vertex indexing rather than recovering the source file's original vertex IDs; current MO3D is geometry-only and does not preserve external per-vertex attributes. The benchmark maps decoded vertices and faces back to source indexing for validation.
+The encoder remaps triangle indices consistently, so each traversal represents the same surface. With BFS, Morton, or predictive ordering, the decoded mesh uses the selected reordered vertex indexing rather than recovering the source file's original vertex IDs; current MO3D is geometry-only and does not preserve external per-vertex attributes. The benchmark maps decoded vertices and faces back to source indexing for validation.
 
 Both methods share the same quantizer, metadata and triangle-index stream. This makes the comparison useful for isolating the coordinate coder, though the total file still contains headers and zlib stream overhead.
 
@@ -223,6 +223,24 @@ A published result must compare equivalent payloads and attribute sets, with the
 ## Security and correctness
 
 MO3D v1/v2 is experimental. The decoder validates headers, stream lengths, coordinate counts, and triangle indices, but this has not been audited for hostile input or production use. Do not decode untrusted files in a privileged workflow.
+
+## Predictive-order experiment: negative result
+
+A second hosted run compared the greedy predictive-cost ordering with source/BFS/Morton, all seven in-house coders and Draco. Full machine-readable results are archived in [the GitHub Actions artifact for run 40195070244](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40195070244) (one timing repetition per operation; encoded sizes are deterministic for these settings).
+
+Across the six synthetic meshes, predictive ordering was worse than both source order and BFS in aggregate for every in-house coder:
+
+| Coder | Source total | BFS total | Predictive total |
+|---|---:|---:|---:|
+| Baseline | 62,652 B | 50,330 B | 69,922 B |
+| Prithvi | 48,132 B | 37,041 B | 54,050 B |
+| Tangent | 49,044 B | 36,077 B | 58,852 B |
+| Weighted tangent | 53,828 B | 41,869 B | 63,712 B |
+| Normal-fine tangent | 54,259 B | 42,297 B | 64,217 B |
+| Chandas | 54,570 B | 42,669 B | 64,628 B |
+| Adaptive Chandas | 53,814 B | 42,421 B | 63,616 B |
+
+The predictive ordering was also markedly slower to encode than BFS (for the baseline on the icosphere, 132.7 ms vs 13.9 ms in this single-repeat run). It was never the best in-house coder/ordering combination for any of the six fixture meshes. Accordingly, it remains an opt-in experiment but is no longer considered by `--method auto`. This is a useful negative result: a heuristic that minimizes an estimated coordinate-residual cost can still worsen the complete stream because it ignores face-index coding and other interactions.
 
 ## Measured baseline, Prithvi and vertex ordering
 
