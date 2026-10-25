@@ -128,6 +128,38 @@ class CodecTests(unittest.TestCase):
         with self.assertRaises(CodecError):
             encode_mesh(vertices, faces, method="tangent")
 
+    def test_normal_fine_tangent_precision_across_orderings(self):
+        levels = (1 << 16) - 1
+        diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        error_bound = diagonal / (2 * levels)
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=16,
+                    method="normal_fine_tangent", ordering=ordering
+                )
+                vertices, faces, header = decode_mesh(payload)
+                restored_vertices = np.empty_like(vertices)
+                restored_vertices[order] = vertices
+                restored_faces = order[faces]
+                errors = np.linalg.norm(restored_vertices - self.vertices, axis=1)
+
+                self.assertEqual(header["version"], 5)
+                self.assertEqual(
+                    header["coordinate_coder"],
+                    "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
+                )
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 5]))
+                steps = np.asarray(header["tangent_residual_steps"], dtype=np.float64)
+                self.assertEqual(steps.shape, (3,))
+                self.assertTrue(np.all(steps > 0))
+                # First component (local surface normal) receives finer precision.
+                self.assertLess(steps[0], steps[1])
+                self.assertAlmostEqual(float(np.sum(steps ** 2)), float(3 * (diagonal / (np.sqrt(3) * levels)) ** 2))
+                self.assertTrue(np.array_equal(restored_faces, self.faces))
+                self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
+
     def test_weighted_tangent_roundtrip_across_orderings(self):
         levels = (1 << 16) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
@@ -155,7 +187,7 @@ class CodecTests(unittest.TestCase):
         candidates = [
             encode_mesh(self.vertices, self.faces, bits=bits, method=method, ordering=ordering)
             for ordering in ("source", "bfs", "morton")
-            for method in ("baseline", "prithvi", "tangent", "weighted_tangent")
+            for method in ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent")
         ]
         automatic = encode_mesh(self.vertices, self.faces, bits=bits, method="auto")
         vertices, faces, header = decode_mesh(automatic)
@@ -169,6 +201,7 @@ class CodecTests(unittest.TestCase):
                 "prithvi-mesh-adjacency-residual-varint-zlib",
                 "tangent-parallelogram-residual-varint-zlib",
                 "weighted-tangent-parallelogram-residual-varint-zlib",
+                "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
             ),
         )
         self.assertEqual(len(vertices), len(self.vertices))
