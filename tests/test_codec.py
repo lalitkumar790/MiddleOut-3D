@@ -122,6 +122,12 @@ class CodecTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(restored_faces, self.faces))
                 self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
 
+    def test_normal_fine_rejects_invalid_normal_step_ratio(self):
+        with self.assertRaises(CodecError):
+            encode_mesh(self.vertices, self.faces, method="normal_fine_tangent", normal_step_ratio=0.0)
+        with self.assertRaises(CodecError):
+            encode_mesh(self.vertices, self.faces, method="normal_fine_tangent", normal_step_ratio=1.1)
+
     def test_tangent_mode_rejects_zero_extent_mesh(self):
         vertices = np.zeros((3, 3), dtype=np.float64)
         faces = np.array([[0, 1, 2]], dtype=np.int64)
