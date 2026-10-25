@@ -420,8 +420,6 @@ def vertex_order_for_mesh(vertices: Any, faces: Any, ordering: str = "source") -
     vertices, faces = _validate_mesh(vertices, faces)
     if ordering not in ORDERINGS:
         raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
-    if face_ordering not in FACE_ORDERINGS:
-        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
     count = len(vertices)
     if ordering == "source":
         return np.arange(count, dtype=np.int64)
@@ -1055,6 +1053,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError(f"method must be one of: {', '.join(METHODS)}")
     if ordering not in ORDERINGS:
         raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
+    if face_ordering not in FACE_ORDERINGS:
+        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
     if not isinstance(normal_step_ratio, (int, float)) or isinstance(normal_step_ratio, bool) or not np.isfinite(normal_step_ratio) or not 0.0 < normal_step_ratio <= 1.0:
         raise CodecError("normal_step_ratio must be in the interval (0, 1]")
     if method == "auto":
