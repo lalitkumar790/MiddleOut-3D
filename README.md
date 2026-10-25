@@ -82,7 +82,7 @@ s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 
 and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests seven single-setting in-house coders under source, BFS, and Morton orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The separate predictive ordering remains experimental and is excluded from `auto` because its first benchmark was larger and slower. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, and Morton orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The separate predictive ordering remains experimental and is excluded from `auto` because its first benchmark was larger and slower. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -241,6 +241,10 @@ Across the six synthetic meshes, predictive ordering was worse than both source 
 | Adaptive Chandas | 53,814 B | 42,421 B | 63,616 B |
 
 The predictive ordering was also markedly slower to encode than BFS (for the baseline on the icosphere, 132.7 ms vs 13.9 ms in this single-repeat run). It was never the best in-house coder/ordering combination for any of the six fixture meshes. Accordingly, it remains an opt-in experiment but is no longer considered by `--method auto`. This is a useful negative result: a heuristic that minimizes an estimated coordinate-residual cost can still worsen the complete stream because it ignores face-index coding and other interactions.
+
+## Predictive ordering experiment
+
+The [predictive-ordering benchmark report](BASELINE_RESULTS.md) and archived [JSON](results/predictive_ordering_study_2026-10-25.json) / [CSV](results/predictive_ordering_study_2026-10-25.csv) show that the greedy predictive order was larger than source order and BFS for every in-house coder in the six-mesh test set. It also took roughly 9.2× the BFS baseline-encoding time in the single-repeat CI run. It remains opt-in for research and is not included in `--method auto`.
 
 ## Measured baseline, Prithvi and vertex ordering
 
