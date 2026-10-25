@@ -1310,6 +1310,8 @@ def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16,
             "tangent-parallelogram-residual-varint-zlib": "tangent",
             "weighted-tangent-parallelogram-residual-varint-zlib": "weighted_tangent",
             "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib": "normal_fine_tangent",
+            "chandas-weighted-tangent-sparse-enumerative-varint-zlib": "chandas_tangent",
+            "chandas-adaptive-weighted-tangent-residual-varint-zlib": "chandas_adaptive_tangent",
         }
         actual_method = coder_to_method[metadata["coordinate_coder"]]
         actual_ordering = metadata.get("vertex_ordering", "source")
