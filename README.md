@@ -82,7 +82,7 @@ s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 
 and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, and Morton orderings, plus five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The separate predictive ordering remains experimental and is excluded from `auto` because its first benchmark was larger and slower. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` compares six single-setting in-house coders under source, BFS, and Morton vertex orderings, plus five normal-step ratios for MO3D v5 under each ordering. That is 33 coordinate-method candidates, each evaluated with source, rotation-only, and BFS face streams (up to 99 complete bitstreams per mesh). It keeps the smallest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. Predictive vertex ordering is excluded from `auto` because its first benchmark was larger and slower. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -139,9 +139,16 @@ When a vertex's earlier adjacent neighbor is geometrically nearby, its residuals
 
 ## Face-connectivity coding experiment
 
-The triangle-index stream now has an optional `face_ordering=bfs` mode. It traverses the triangle dual graph (adjacent faces share an edge), chooses a deterministic BFS face sequence, then chooses among the three cyclic rotations of each triangle to minimize local signed-varint delta cost relative to the previous index. The three rotations preserve winding; faces are never reversed. This changes face order and cyclic starting points, but preserves the represented oriented triangle set.
+Three face-stream strategies can be tested:
 
-This is a small, modern connectivity-stream experiment inspired by the general insight behind topology encoders—not an implementation of EdgeBreaker. It is measured against the current flat face-index delta stream; it will remain optional unless complete bitstream size and runtime improve.
+- `source`: preserve triangle rows and cyclic starts (the default, with no extra header field).
+- `rotate`: preserve row order but choose the cheapest of the three cyclic starts for each triangle under the current signed-varint delta model.
+- `bfs`: traverse the triangle dual graph (faces share an edge), then optimize cyclic starts in that order.
+- `auto`: encode the complete bitstream using source, rotate, and BFS, then keep the shortest payload for that mesh and coordinate coder.
+
+Cyclic rotations preserve triangle winding; faces are never reversed. Both rotate and BFS change the serialized ordering of oriented faces, but preserve the represented oriented triangle set. The `benchmark-connectivity` command compares complete payload sizes, encode/decode time, topology, and geometry error across methods and vertex orderings.
+
+This is a modern connectivity-stream experiment informed by topology-compression research—not an implementation of EdgeBreaker and not an algorithm taken from a Vedic or Desika-era text. The benchmark decides whether each strategy earns a place in `auto`.
 
 ## Quick start
 
@@ -162,7 +169,7 @@ python -m middleout3d generate-fixtures --out samples
 # Compare coders and vertex orderings; JSON and CSV reports are written
 python -m middleout3d benchmark samples --out results/baseline.json --bits 16 --repeats 5
 
-# Compare source vs BFS face-stream ordering, with topology/error checks
+# Compare source, rotation-only, and BFS face-stream strategies
 python -m middleout3d benchmark-connectivity samples --out results/connectivity.json --bits 16 --repeats 1
 
 # Encode with the Prithvi predictor, preserving source order
