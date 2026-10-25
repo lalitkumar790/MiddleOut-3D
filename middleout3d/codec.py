@@ -678,9 +678,22 @@ def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(encoded)
+    actual_method = method
+    actual_ordering = ordering
+    if method == "auto":
+        _, _, metadata = decode_mesh(encoded)
+        coder_to_method = {
+            "absolute-fixed-width-zlib": "baseline",
+            "prithvi-mesh-adjacency-residual-varint-zlib": "prithvi",
+            "tangent-parallelogram-residual-varint-zlib": "tangent",
+            "weighted-tangent-parallelogram-residual-varint-zlib": "weighted_tangent",
+        }
+        actual_method = coder_to_method[metadata["coordinate_coder"]]
+        actual_ordering = metadata.get("vertex_ordering", "source")
     return {"input": str(input_path), "output": str(output_path), "input_bytes": Path(input_path).stat().st_size,
             "output_bytes": len(encoded), "ratio": Path(input_path).stat().st_size / len(encoded),
-            "position_bits": bits, "method": method, "ordering": ordering, "vertices": len(vertices), "faces": len(faces)}
+            "position_bits": bits, "requested_method": method, "method": actual_method, "ordering": actual_ordering,
+            "vertices": len(vertices), "faces": len(faces)}
 
 
 def decode_file(input_path: str | Path, output_path: str | Path) -> dict[str, Any]:
