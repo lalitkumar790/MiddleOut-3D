@@ -29,7 +29,7 @@ Because every parent has an index smaller than its child, decoding is causal: re
 ## Evaluation questions
 
 - Does Prithvi reduce coordinate-stream and total-file size versus the absolute-coordinate baseline at equal position precision?
-- How does vertex ordering affect size? Current implementation uses source order and does not reorder vertices.
+- How does vertex ordering affect size? The implementation now tests source order, deterministic BFS graph traversal, and 3D Morton/Z-order.
 - Which mesh families benefit (grid-like surfaces, CAD parts, spheres, scans, irregular triangulations)?
 - Is any improvement retained after accounting for the header, adjacency prediction costs, and decoder time?
 - How does it compare with Google Draco when attributes, quantization and distortion constraints are matched?
@@ -44,9 +44,21 @@ Because every parent has an index smaller than its child, decoding is causal: re
 
 ## Next experiments
 
-1. Run the automated baseline-versus-Prithvi comparison across all six built-in fixtures, 8–24 bit precision, and repeat counts.
-2. Measure results for alternative vertex orderings: source order, breadth-first mesh traversal, and spatial Morton ordering (with explicit remapping of triangle indices).
-3. Add a Draco baseline at comparable distortion and with the same attribute set.
-4. Add surface-distance measures for topology-changing codecs.
-5. Record CPU, OS, Python/dependency versions, encode/decode time, and peak memory.
-6. Consider multi-parent prediction only after this simple causal predictor is measured and reproducible.
+1. Extend the ordering study to real-world CAD, scan, and robotics meshes with redistribution rights.
+2. Optimize the Python BFS ordering and residual-varint loops; BFS currently improves size on the synthetic aggregate but slows encoding and decoding.
+3. Compare additional deterministic traversal heuristics, including degree-aware neighbor visits, with results held out from tuning.
+4. Add a Draco baseline at comparable distortion and with the same attribute set.
+5. Add surface-distance measures for topology-changing codecs and record peak memory.
+6. Consider multi-parent prediction only after the single-parent predictor is measured reproducibly on a representative dataset.
+
+## First vertex ordering results
+
+The first hosted comparison is documented in [BASELINE_RESULTS.md](BASELINE_RESULTS.md) and the [machine-readable JSON](results/vertex_ordering_study_2026-10-25.json) / [CSV](results/vertex_ordering_study_2026-10-25.csv).
+
+At 16 bits per axis over six deterministic synthetic meshes:
+
+- Source order: 61,956 bytes for the absolute baseline and 47,436 bytes for Prithvi (23.4360% lower).
+- BFS: 49,634 bytes for the baseline and 36,345 bytes for Prithvi (26.7740% lower than the same-order baseline).
+- Morton: 79,687 bytes for the baseline and 69,734 bytes for Prithvi (12.4901% lower than the same-order baseline).
+
+BFS + Prithvi was the smallest of these tested configurations, but it was slower than the matched baseline in the hosted run. Morton performed poorly on this fixture set. These results are exploratory and should not be treated as general conclusions about arbitrary meshes. All 18 mesh/ordering/method combinations passed topology and quantized-coordinate equivalence checks.
