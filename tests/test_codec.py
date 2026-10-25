@@ -6,7 +6,7 @@ import trimesh
 
 from middleout3d.codec import (
     AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_CODING_OPTIONS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
-    _encode_chandas_sparse_signed, _decode_chandas_sparse_signed,
+    _encode_chandas_sparse_signed, _decode_chandas_sparse_signed, _encode_varint, _zigzag_encode, _reorder_faces_for_stream,
 )
 
 
@@ -368,6 +368,42 @@ class CodecTests(unittest.TestCase):
                             / (2 * ((1 << 16) - 1))
                         ))
                         self.assertLessEqual(max_error, error_bound * 1.0001 + 1e-12)
+
+    def test_dp_face_rotation_matches_exhaustive_raw_varint_optimum(self):
+        import itertools
+
+        faces = np.asarray([[0, 129, 5], [128, 6, 260], [7, 131, 2], [258, 3, 132]], dtype=np.int64)
+        actual = _reorder_faces_for_stream(self.vertices, faces, "rotate_dp")
+
+        def raw_cost(candidate):
+            previous = 0
+            total = 0
+            for value in candidate.reshape(-1):
+                total += len(_encode_varint(_zigzag_encode(int(value) - previous)))
+                previous = int(value)
+            return total
+
+        optimum = min(
+            raw_cost(np.asarray([
+                tuple((int(a), int(b), int(c))[rotation:] + (int(a), int(b), int(c))[:rotation])
+                for (a, b, c), rotation in zip(faces, rotations)
+            ], dtype=np.int64))
+            for rotations in itertools.product(range(3), repeat=len(faces))
+        )
+        self.assertEqual(raw_cost(actual), optimum)
+
+    def test_rotate_dp_roundtrip_preserves_topology_and_error_budget(self):
+        for method in ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent"):
+            with self.subTest(method=method):
+                payload = encode_mesh(self.vertices, self.faces, bits=16, method=method, face_ordering="rotate_dp")
+                vertices, faces, header = decode_mesh(payload)
+                self.assertEqual(header.get("face_ordering"), "rotate_dp")
+                self.assertEqual(len(vertices), len(self.vertices))
+                self.assertEqual(len(faces), len(self.faces))
+                self.assertEqual(sorted(tuple(sorted(row)) for row in faces), sorted(tuple(sorted(row)) for row in self.faces))
+                error = np.linalg.norm(vertices - self.vertices, axis=1).max()
+                bound = np.linalg.norm((self.vertices.max(axis=0) - self.vertices.min(axis=0)) / (2 * ((1 << 16) - 1)))
+                self.assertLessEqual(float(error), bound * 1.0001 + 1e-12)
 
     def test_invalid_face_ordering_rejected(self):
         with self.assertRaises(CodecError):

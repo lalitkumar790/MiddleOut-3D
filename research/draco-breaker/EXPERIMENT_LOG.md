@@ -64,3 +64,12 @@ Terms must include estimated signaling/model overhead, not just raw residual ent
 3. Capture baseline outputs, commands, hardware/compiler details, and repeat timings.
 4. Implement one isolated split-cost candidate and compare actual encoded bytes against upstream.
 5. Record raw machine-readable results and negative results here and in adjacent result artifacts.
+
+
+## E001 — Dynamic-programming cyclic face rotation (implementation queued for CI)
+
+- Changed files: `middleout3d/codec.py`, `middleout3d/connectivity_benchmark.py`, `middleout3d/cli.py`, and `tests/test_codec.py`; CI workflow added at `.github/workflows/draco-breaker-research.yml`.
+- Mathematical idea: each triangle has three cyclic rotations. The next triangle's first delta depends on the previous rotation's last vertex, so dynamic programming keeps three states and finds the globally minimal raw signed-varint byte cost in O(F) time and O(F) backpointer memory.
+- Falsification check: compare complete MO3D payload sizes after zlib, not merely the raw-varint objective; verify exact triangle topology and identical position-error budget.
+- Commands run in this chat: GitHub API source reads and source transformations only. No Python test, build, or benchmark has run in this execution turn yet.
+- Next: GitHub Actions will run tests and a 3-repeat synthetic benchmark, then commit raw JSON/CSV results and measured summary to this branch. No win is claimed until that run succeeds.

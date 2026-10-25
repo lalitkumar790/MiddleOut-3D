@@ -105,6 +105,7 @@ def benchmark_connectivity_file(path: Path, bits: int = 16, repeats: int = 1) ->
                 )
             source = candidates["source"]
             rotate = candidates["rotate"]
+            rotate_dp = candidates["rotate_dp"]
             bfs = candidates["bfs"]
             output.append({
                 "mesh": path.name,
@@ -117,6 +118,7 @@ def benchmark_connectivity_file(path: Path, bits: int = 16, repeats: int = 1) ->
                 "vertex_ordering": vertex_ordering,
                 "source_face_stream": source,
                 "rotate_face_stream": rotate,
+                "rotate_dp_face_stream": rotate_dp,
                 "bfs_face_stream": bfs,
                 "rotate_size_reduction_vs_source_pct": round(
                     (1 - rotate["bytes"] / source["bytes"]) * 100, 4
@@ -165,6 +167,7 @@ def benchmark_connectivity_directory(
             "mesh_count": 0,
             "source_total_bytes": 0,
             "rotate_total_bytes": 0,
+            "rotate_dp_total_bytes": 0,
             "bfs_total_bytes": 0,
             "source_error_checks_passed": True,
             "rotate_error_checks_passed": True,
@@ -176,6 +179,7 @@ def benchmark_connectivity_directory(
         entry["mesh_count"] += 1
         entry["source_total_bytes"] += row["source_face_stream"]["bytes"]
         entry["rotate_total_bytes"] += row["rotate_face_stream"]["bytes"]
+        entry["rotate_dp_total_bytes"] += row["rotate_dp_face_stream"]["bytes"]
         entry["bfs_total_bytes"] += row["bfs_face_stream"]["bytes"]
         entry["source_error_checks_passed"] &= row["source_face_stream"]["error_budget_met"]
         entry["rotate_error_checks_passed"] &= row["rotate_face_stream"]["error_budget_met"]
@@ -188,6 +192,12 @@ def benchmark_connectivity_directory(
         row["rotate_size_reduction_vs_source_pct"] = round(
             (1 - row["rotate_total_bytes"] / row["source_total_bytes"]) * 100, 4
         ) if row["source_total_bytes"] else None
+        row["rotate_dp_size_reduction_vs_source_pct"] = round(
+            (1 - row["rotate_dp_total_bytes"] / row["source_total_bytes"]) * 100, 4
+        ) if row["source_total_bytes"] else None
+        row["rotate_dp_size_reduction_vs_rotate_pct"] = round(
+            (1 - row["rotate_dp_total_bytes"] / row["rotate_total_bytes"]) * 100, 4
+        ) if row["rotate_total_bytes"] else None
         row["bfs_size_reduction_vs_source_pct"] = round(
             (1 - row["bfs_total_bytes"] / row["source_total_bytes"]) * 100, 4
         ) if row["source_total_bytes"] else None
@@ -215,10 +225,10 @@ def benchmark_connectivity_directory(
         "aggregate": aggregates,
         "errors": errors,
         "interpretation_note": (
-            "BFS face ordering traverses the triangle dual graph and chooses the cyclic "
-            "rotation with the shortest signed-varint delta cost relative to the previous "
-            "index. Triangle winding is preserved. The reported bytes include the complete "
-            "MO3D bitstream, not just the face stream."
+            "Greedy rotation chooses the locally cheapest cyclic start. rotate_dp uses a "
+            "three-state dynamic program to minimize total raw signed-varint byte count "
+            "for fixed face order. BFS traverses the triangle dual graph. Triangle winding "
+            "is preserved; reported bytes include the complete MO3D bitstream."
         ),
     }
     output_json = Path(output_json)
@@ -227,13 +237,14 @@ def benchmark_connectivity_directory(
     csv_path = output_json.with_suffix(".csv")
     columns = [
         "mesh", "method", "vertex_ordering",
-        "source_bytes", "rotate_bytes", "bfs_bytes",
-        "rotate_size_reduction_vs_source_pct", "bfs_size_reduction_vs_source_pct",
-        "source_encode_median_ms", "rotate_encode_median_ms", "bfs_encode_median_ms",
-        "source_decode_median_ms", "rotate_decode_median_ms", "bfs_decode_median_ms",
-        "source_max_vertex_error", "rotate_max_vertex_error", "bfs_max_vertex_error",
-        "source_error_budget_met", "rotate_error_budget_met", "bfs_error_budget_met",
-        "source_topology_exact", "rotate_topology_exact", "bfs_topology_exact",
+        "source_bytes", "rotate_bytes", "rotate_dp_bytes", "bfs_bytes",
+        "rotate_size_reduction_vs_source_pct", "rotate_dp_size_reduction_vs_source_pct",
+        "rotate_dp_size_reduction_vs_rotate_pct", "bfs_size_reduction_vs_source_pct",
+        "source_encode_median_ms", "rotate_encode_median_ms", "rotate_dp_encode_median_ms", "bfs_encode_median_ms",
+        "source_decode_median_ms", "rotate_decode_median_ms", "rotate_dp_decode_median_ms", "bfs_decode_median_ms",
+        "source_max_vertex_error", "rotate_max_vertex_error", "rotate_dp_max_vertex_error", "bfs_max_vertex_error",
+        "source_error_budget_met", "rotate_error_budget_met", "rotate_dp_error_budget_met", "bfs_error_budget_met",
+        "source_topology_exact", "rotate_topology_exact", "rotate_dp_topology_exact", "bfs_topology_exact",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
@@ -245,23 +256,31 @@ def benchmark_connectivity_directory(
                 "vertex_ordering": row["vertex_ordering"],
                 "source_bytes": row["source_face_stream"]["bytes"],
                 "rotate_bytes": row["rotate_face_stream"]["bytes"],
+                "rotate_dp_bytes": row["rotate_dp_face_stream"]["bytes"],
                 "bfs_bytes": row["bfs_face_stream"]["bytes"],
                 "rotate_size_reduction_vs_source_pct": row["rotate_size_reduction_vs_source_pct"],
+                "rotate_dp_size_reduction_vs_source_pct": row["rotate_dp_size_reduction_vs_source_pct"],
+                "rotate_dp_size_reduction_vs_rotate_pct": row["rotate_dp_size_reduction_vs_rotate_pct"],
                 "bfs_size_reduction_vs_source_pct": row["bfs_size_reduction_vs_source_pct"],
                 "source_encode_median_ms": row["source_face_stream"]["encode_median_ms"],
                 "rotate_encode_median_ms": row["rotate_face_stream"]["encode_median_ms"],
+                "rotate_dp_encode_median_ms": row["rotate_dp_face_stream"]["encode_median_ms"],
                 "bfs_encode_median_ms": row["bfs_face_stream"]["encode_median_ms"],
                 "source_decode_median_ms": row["source_face_stream"]["decode_median_ms"],
                 "rotate_decode_median_ms": row["rotate_face_stream"]["decode_median_ms"],
+                "rotate_dp_decode_median_ms": row["rotate_dp_face_stream"]["decode_median_ms"],
                 "bfs_decode_median_ms": row["bfs_face_stream"]["decode_median_ms"],
                 "source_max_vertex_error": row["source_face_stream"]["max_vertex_error"],
                 "rotate_max_vertex_error": row["rotate_face_stream"]["max_vertex_error"],
+                "rotate_dp_max_vertex_error": row["rotate_dp_face_stream"]["max_vertex_error"],
                 "bfs_max_vertex_error": row["bfs_face_stream"]["max_vertex_error"],
                 "source_error_budget_met": row["source_face_stream"]["error_budget_met"],
                 "rotate_error_budget_met": row["rotate_face_stream"]["error_budget_met"],
+                "rotate_dp_error_budget_met": row["rotate_dp_face_stream"]["error_budget_met"],
                 "bfs_error_budget_met": row["bfs_face_stream"]["error_budget_met"],
                 "source_topology_exact": row["source_face_stream"]["topology_exact"],
                 "rotate_topology_exact": row["rotate_face_stream"]["topology_exact"],
+                "rotate_dp_topology_exact": row["rotate_dp_face_stream"]["topology_exact"],
                 "bfs_topology_exact": row["bfs_face_stream"]["topology_exact"],
             })
     return {

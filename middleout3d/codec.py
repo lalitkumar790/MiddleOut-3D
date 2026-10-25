@@ -310,7 +310,7 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
-FACE_CODING_OPTIONS = ("source", "rotate", "bfs")
+FACE_CODING_OPTIONS = ("source", "rotate", "rotate_dp", "bfs")
 FACE_ORDERINGS = (*FACE_CODING_OPTIONS, "auto")
 # The auto selector compares complete payloads for source, rotation-only, and BFS.
 AUTO_FACE_ORDERINGS = ("auto",)
@@ -601,7 +601,7 @@ def _reorder_faces_for_stream(
     if face_count < 2:
         return faces.copy()
 
-    if face_ordering == "rotate":
+    if face_ordering in {"rotate", "rotate_dp"}:
         traversal = list(range(face_count))
     else:
         edge_faces: dict[tuple[int, int], list[int]] = {}
@@ -645,6 +645,52 @@ def _reorder_faces_for_stream(
                     if not visited[neighbor]:
                         visited[neighbor] = True
                         queue.append(neighbor)
+
+    if face_ordering == "rotate_dp":
+        # Three-state dynamic programming minimizes raw signed-varint byte count.
+        rotations_by_face: list[tuple[tuple[int, int, int], ...]] = []
+        for face_index in traversal:
+            a, b, c = (int(x) for x in faces[face_index])
+            rotations_by_face.append(((a, b, c), (b, c, a), (c, a, b)))
+
+        costs = []
+        for rotation in rotations_by_face[0]:
+            previous = 0
+            cost = 0
+            for value in rotation:
+                cost += len(_encode_varint(_zigzag_encode(value - previous)))
+                previous = value
+            costs.append(cost)
+        backpointers: list[tuple[int, int, int]] = []
+
+        for face_position in range(1, len(rotations_by_face)):
+            current_costs = []
+            current_back = []
+            for rotation in rotations_by_face[face_position]:
+                best = None
+                best_previous = 0
+                for previous_index, previous_cost in enumerate(costs):
+                    last = rotations_by_face[face_position - 1][previous_index][-1]
+                    transition = 0
+                    for value in rotation:
+                        transition += len(_encode_varint(_zigzag_encode(value - last)))
+                        last = value
+                    candidate = previous_cost + transition
+                    if best is None or (candidate, previous_index) < (best, best_previous):
+                        best, best_previous = candidate, previous_index
+                current_costs.append(int(best))
+                current_back.append(best_previous)
+            costs = current_costs
+            backpointers.append(tuple(current_back))
+
+        selected = [0] * len(rotations_by_face)
+        selected[-1] = min(range(3), key=lambda index: (costs[index], index))
+        for face_position in range(len(rotations_by_face) - 1, 0, -1):
+            selected[face_position - 1] = backpointers[face_position - 1][selected[face_position]]
+        return np.asarray(
+            [rotations_by_face[index][selected[index]] for index in range(len(rotations_by_face))],
+            dtype=np.int64,
+        )
 
     reordered: list[tuple[int, int, int]] = []
     previous = 0

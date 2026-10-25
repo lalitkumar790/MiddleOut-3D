@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--out", default="results/baseline.json")
     bench.add_argument("--bits", type=int, default=16)
     bench.add_argument("--repeats", type=int, default=3)
-    conn = sub.add_parser("benchmark-connectivity", help="compare source vs BFS face ordering while preserving triangle winding")
+    conn = sub.add_parser("benchmark-connectivity", help="compare source, greedy rotation, DP rotation, and BFS face ordering while preserving triangle winding")
     conn.add_argument("input_dir", nargs="?", default="samples")
     conn.add_argument("--out", default="results/connectivity-benchmark.json")
     conn.add_argument("--bits", type=int, default=16)

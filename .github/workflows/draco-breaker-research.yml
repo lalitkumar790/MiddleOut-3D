@@ -1,0 +1,104 @@
+name: Draco-Breaker DP face-rotation research
+
+on:
+  push:
+    branches: ["research/draco-breaker"]
+    paths:
+      - "middleout3d/**"
+      - "tests/**"
+      - ".github/workflows/draco-breaker-research.yml"
+      - "requirements.txt"
+      - "requirements-benchmark.txt"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out research branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-benchmark.txt
+      - name: Install benchmark dependencies
+        run: python -m pip install -r requirements-benchmark.txt
+      - name: Generate deterministic fixtures
+        run: python -m middleout3d generate-fixtures --out samples
+      - name: Run codec tests
+        run: python -m unittest discover -s tests -v
+      - name: Benchmark complete payloads
+        run: python -m middleout3d benchmark-connectivity samples --out results/draco-breaker-rotate-dp.json --bits 16 --repeats 3
+      - name: Validate, summarize, and append experiment log
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("results/draco-breaker-rotate-dp.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          if report["errors"]:
+              raise SystemExit(f"Benchmark errors: {report['errors']}")
+          strategies = ("source", "rotate", "rotate_dp", "bfs")
+          for row in report["results"]:
+              for strategy in strategies:
+                  metrics = row[f"{strategy}_face_stream"]
+                  if not metrics["topology_exact"]:
+                      raise SystemExit(f"Topology failure: {row['mesh']}/{row['method']}/{row['vertex_ordering']}/{strategy}")
+                  if not metrics["error_budget_met"]:
+                      raise SystemExit(f"Error budget failure: {row['mesh']}/{row['method']}/{row['vertex_ordering']}/{strategy}")
+
+          results = report["results"]
+          wins = sum(r["rotate_dp_face_stream"]["bytes"] < r["rotate_face_stream"]["bytes"] for r in results)
+          ties = sum(r["rotate_dp_face_stream"]["bytes"] == r["rotate_face_stream"]["bytes"] for r in results)
+          losses = len(results) - wins - ties
+          totals = {
+              strategy: sum(row[f"{strategy}_face_stream"]["bytes"] for row in results)
+              for strategy in strategies
+          }
+          dp_vs_greedy = (1 - totals["rotate_dp"] / totals["rotate"]) * 100
+          summary = [
+              f"source={totals['source']} B",
+              f"greedy_rotate={totals['rotate']} B",
+              f"DP_rotate={totals['rotate_dp']} B",
+              f"BFS={totals['bfs']} B",
+              f"DP_vs_greedy={dp_vs_greedy:+.4f}%",
+              f"case wins/ties/losses={wins}/{ties}/{losses} of {len(results)}",
+          ]
+          print(" | ".join(summary))
+          log = Path("research/draco-breaker/EXPERIMENT_LOG.md")
+          with log.open("a", encoding="utf-8") as handle:
+              handle.write("\n\n## E001 — Dynamic-programming cyclic face rotation\n\n")
+              handle.write(f"- GitHub Actions run: {os.environ['RUN_URL']}\n")
+              handle.write(f"- Source commit tested: {os.environ['SOURCE_SHA']}.\n")
+              handle.write("- Change: added rotate_dp, a three-state dynamic program that minimizes exact uncompressed signed-varint byte cost across cyclic rotations in fixed face order. Complexity is O(F) time and O(F) backpointer storage.\n")
+              handle.write("- Rationale: greedy rotation minimizes each triangle's cost conditioned on the previous index but may sacrifice a better continuation; DP preserves the last-index state needed for the optimal global raw-varint sequence.\n")
+              handle.write("- Commands actually run: python -m unittest discover -s tests -v; python -m middleout3d benchmark-connectivity samples --out results/draco-breaker-rotate-dp.json --bits 16 --repeats 3.\n")
+              handle.write(f"- Configuration: {len({r['mesh'] for r in results})} deterministic synthetic fixtures, {len(report['configuration']['methods'])} codec methods, {len(report['configuration']['vertex_orderings'])} vertex orderings, 16-bit positions, 3 timing repetitions.\n")
+              handle.write("- Actual complete-payload totals across all fixed mesh/method/vertex-order cases: " + "; ".join(summary) + ".\n")
+              handle.write("- All strategies were required to pass exact oriented topology and the same position-error budget; workflow fails if any check fails. Per-case raw results and timing medians are in results/draco-breaker-rotate-dp.json and .csv.\n")
+              handle.write("- Caveat: the DP objective is raw varint bytes, while the benchmark decision uses actual complete compressed MO3D payload bytes after zlib and headers. Synthetic fixtures are development data; this is not a Draco-vs-MO3D result.\n")
+              handle.write("- Next: if DP improves actual bytes, validate on held-out licensed meshes and inspect encode-time overhead; otherwise keep it experimental and test better objectives.\n")
+
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/draco-breaker-rotate-dp.json results/draco-breaker-rotate-dp.csv research/draco-breaker/EXPERIMENT_LOG.md
+          if git diff --cached --quiet; then
+            echo "No research artifacts changed."
+          else
+            git commit -m "[skip ci] research: archive DP face-rotation benchmark"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
