@@ -20,14 +20,15 @@ Relevant existing work:
 
 ## Current prototype
 
-MO3D has six versioned coordinate coders:
+MO3D has seven versioned coordinate coders:
 
 - **MO3D v1 baseline:** quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
 - **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, zigzag-coded, varint-encoded, then compressed with zlib.
 - **MO3D v3 tangent:** an unweighted parallelogram geometry predictor with residuals expressed in a local orthonormal frame.
 - **MO3D v4 weighted tangent:** a valence-informed weighted parallelogram predictor with residuals expressed in the same kind of local frame. The weights approximate local triangle angles from vertex valences and combine them with the known base-triangle angles, following the idea of published weighted-parallelogram research.
 - **MO3D v5 normal-fine tangent:** uses the weighted predictor, but quantizes the local normal residual more finely than the two tangential residuals.
-- **MO3D v6 Chandas:** uses the weighted tangent predictor, but stores the 64-symbol residual blocks using combinatorial ranking of non-zero positions, followed by signed non-zero values. It is inspired by pattern enumeration in Piṅgala's *Chandaḥśāstra*, not a claim that the exact coding technique appears in that text.
+- **MO3D v6 Chandas:** the first, fixed enumerative variant; it ranks non-zero positions in each 64-symbol residual block but also encodes seed values in that pattern stream.
+- **MO3D v7 adaptive Chandas:** separates absolute seed coordinates from prediction residuals, then chooses per 64-symbol residual block between direct signed varints and an enumeratively ranked non-zero-position pattern. The intent is to avoid paying the sparse-pattern overhead on dense blocks. It is inspired by pattern enumeration in Piṅgala's *Chandaḥśāstra*, not a claim that the exact coding technique appears in that text.
 
 The weighted predictor uses the form
 
@@ -41,13 +42,19 @@ with angle-derived weights inspired by the referenced research. This is a resear
 
 Piṅgala's *Chandaḥśāstra* is a historical source for combinatorial procedures that list and index metrical patterns and count patterns by the number of short syllables; Jayant Shah surveys the methods and their debated historical interpretations in [A History of Piṅgala's Combinatorics](https://sanskrit.uohyd.ac.in/Algorithms_in_Ancient_India/Material/Pingala.pdf). We borrow the *pattern-enumeration* idea as a modern coding hypothesis.
 
-For a block of (n\) residual symbols, let the non-zero positions be (S=\{s_0<s_1<\ldots<s_{k-1}\}\). MO3D v6 ranks the position set with the combinatorial number system:
+For a block of (n) residual symbols, let the non-zero positions be (S=\{s_0<s_1<\ldots<s_{k-1}\}). MO3D v6 ranks the position set with the combinatorial number system:
 
 \[
 \operatorname{rank}(S)=\sum_{j=0}^{k-1}\binom{s_j}{j+1}
 \]
 
-The stream stores (k\), the rank using enough bits for one of the (\binom{n}{k}\) possible subsets, and the non-zero signed values. Zero positions are implicit. Current block size is 64; the resulting sparse stream is then compressed with zlib. This is connected to modern **enumerative coding**: Fraenkel's 1989 paper discusses number systems for compression of sparse binary strings ([Information and Computation](https://doi.org/10.1016/0890-5401(89)90028-X)). It is not a direct transcription of a Sanskrit algorithm, and zlib may already encode zeros efficiently—so we measure whether this extra layer earns its overhead.
+The stream stores (k), the rank using enough bits for one of the (\binom{n}{k}) possible subsets, and the non-zero signed values. Zero positions are implicit. Current block size is 64; the resulting sparse stream is then compressed with zlib. V6 uses this representation for every symbol block, while v7 keeps the same rank/unrank option but switches to direct signed varints whenever they are no longer than the sparse representation for that block. V6's first benchmark was mixed and slightly larger overall than v4, which motivated the adaptive v7 format. This is connected to modern **enumerative coding**: Fraenkel's 1989 paper discusses number systems for compression of sparse binary strings ([Information and Computation](https://doi.org/10.1016/0890-5401(89)90028-X)). It is not a direct transcription of a Sanskrit algorithm, and zlib may already encode zeros efficiently—so we measure whether this extra layer earns its overhead.
+
+### Adaptive Chandas residual coding (MO3D v7)
+
+V7 separates seed vertices (absolute quantized XYZ triples) from predicted-vertex residuals. Each 64-symbol residual block is encoded in whichever local representation has the lower pre-zlib byte count: ordinary signed zigzag-varints, or the combinatorial rank of its non-zero positions plus only those non-zero values. A one-byte mode flag makes the block decoder unambiguous. This can avoid the largest known weakness of fixed enumerative coding: paying a pattern rank even when most entries are non-zero.
+
+That does not guarantee the full file is smaller than v4: the seed/residual framing and mode flags add overhead, and zlib may already compress many zero runs. The benchmark must verify whether the adaptive layer wins on the complete compressed stream.
 
 ### Non-uniform normal/tangent quantization (MO3D v5)
 
@@ -66,7 +73,7 @@ s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 
 and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests the five ordinary in-house coders under source, BFS, and Morton orderings and tests five normal-step ratios for MO3D v5 under each ordering. That is up to 30 candidates per mesh, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` tests six single-setting in-house coders under source, BFS, and Morton orderings and tests five normal-step ratios for MO3D v5 under each ordering: up to 33 candidate bitstreams per mesh. It selects the shortest candidate that meets the conservative error bound, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
