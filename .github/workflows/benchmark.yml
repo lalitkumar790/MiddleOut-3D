@@ -39,7 +39,7 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Generate deterministic benchmark meshes
         run: python -m middleout3d generate-fixtures --out samples
-      - name: Run baseline versus Prithvi benchmark
+      - name: Run baseline versus Prithvi benchmark across orderings
         run: |
           python -m middleout3d benchmark samples --out results/ci-benchmark.json --bits "${{ github.event.inputs.bits || '16' }}" --repeats "${{ github.event.inputs.repeats || '5' }}"
       - name: Print per-mesh comparison summary
@@ -47,20 +47,28 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | baseline B | Prithvi B | size delta % | baseline enc/dec ms | Prithvi enc/dec ms | topology | max error")
+          print("mesh | ordering | baseline B | Prithvi B | size delta % | baseline enc/dec ms | Prithvi enc/dec ms | topology | same quantized coordinates")
           for row in report["results"]:
-              print(
-                  f'{row["name"]} | {row["mo3d_lossy_geometry_bytes"]} | {row["prithvi_bytes"]} | '
-                  f'{row["prithvi_size_reduction_vs_mo3d_baseline_pct"]}% | '
-                  f'{row["mo3d_encode_median_ms"]}/{row["mo3d_decode_median_ms"]} | '
-                  f'{row["prithvi_encode_median_ms"]}/{row["prithvi_decode_median_ms"]} | '
-                  f'{row["prithvi_topology_exact"]} | {row["prithvi_geometry_max_vertex_error"]}'
-              )
+              for result in row["ordering_results"]:
+                  print(
+                      f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
+                      f'{result["prithvi_size_reduction_vs_baseline_pct"]}% | '
+                      f'{result["baseline_encode_median_ms"]}/{result["baseline_decode_median_ms"]} | '
+                      f'{result["prithvi_encode_median_ms"]}/{result["prithvi_decode_median_ms"]} | '
+                      f'{result["baseline_topology_exact"] and result["prithvi_topology_exact"]} | '
+                      f'{result["quantized_positions_equal"]}'
+                  )
           if report["errors"]:
               print("BENCHMARK ERRORS:", report["errors"])
               raise SystemExit(1)
-          if not all(r["prithvi_decoder_bytes_exact"] and r["baseline_prithvi_quantized_positions_equal"] for r in report["results"]):
-              raise SystemExit("Prithvi reconstruction checks failed")
+          if not all(
+              result["baseline_topology_exact"]
+              and result["prithvi_topology_exact"]
+              and result["quantized_positions_equal"]
+              for row in report["results"]
+              for result in row["ordering_results"]
+          ):
+              raise SystemExit("Ordering remapping or Prithvi reconstruction checks failed")
           PY
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
