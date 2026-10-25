@@ -1,0 +1,298 @@
+{
+  "project": "MiddleOut-3D",
+  "experiment": "Source vs rotation-only vs BFS face-stream ordering",
+  "generated_at_utc": "2026-10-25T13:20:55Z",
+  "workflow_run": "https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40196914983",
+  "source_commit": "ef4005001a46ae9ea3356c6a045e9b844af17a39",
+  "environment": {
+    "ci": "GitHub Actions ubuntu-latest",
+    "python": "3.12.15",
+    "numpy": "2.5.4"
+  },
+  "configuration": {
+    "position_bits_per_axis": 16,
+    "repeats": 1,
+    "mesh_count": 6,
+    "methods": 7,
+    "vertex_orderings": [
+      "source",
+      "bfs",
+      "morton"
+    ],
+    "face_orderings": [
+      "source",
+      "rotate",
+      "bfs"
+    ],
+    "timing_statistic": "median wall-clock ms",
+    "warmup": "not explicitly separated"
+  },
+  "strategy_definitions": {
+    "source": "Keep original triangle row order and cyclic start.",
+    "rotate": "Keep triangle row order; choose the cyclic rotation minimizing the signed-varint index-delta length for the current previous-index context.",
+    "bfs": "Traverse the triangle dual graph in deterministic BFS order and choose each face's cyclic start using the same local delta-cost rule. Triangle winding is not reversed."
+  },
+  "aggregate_across_methods_by_vertex_ordering": {
+    "source": {
+      "source_bytes": 376567,
+      "rotate_bytes": 362336,
+      "bfs_bytes": 395509,
+      "rotate_size_reduction_vs_source_pct": 3.7791,
+      "bfs_size_reduction_vs_source_pct": -5.0302
+    },
+    "bfs": {
+      "source_bytes": 293014,
+      "rotate_bytes": 292587,
+      "bfs_bytes": 347803,
+      "rotate_size_reduction_vs_source_pct": 0.1457,
+      "bfs_size_reduction_vs_source_pct": -18.6984
+    },
+    "morton": {
+      "source_bytes": 529009,
+      "rotate_bytes": 520882,
+      "bfs_bytes": 569686,
+      "rotate_size_reduction_vs_source_pct": 1.5363,
+      "bfs_size_reduction_vs_source_pct": -7.6893
+    }
+  },
+  "results": [
+    {
+      "vertex_ordering": "source",
+      "method": "baseline",
+      "source_bytes": 62652,
+      "rotate_bytes": 60619,
+      "bfs_bytes": 65358,
+      "rotate_size_reduction_vs_source_pct": 3.2449,
+      "bfs_size_reduction_vs_source_pct": -4.3191,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "prithvi",
+      "source_bytes": 48132,
+      "rotate_bytes": 46099,
+      "bfs_bytes": 50838,
+      "rotate_size_reduction_vs_source_pct": 4.2238,
+      "bfs_size_reduction_vs_source_pct": -5.622,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "tangent",
+      "source_bytes": 49044,
+      "rotate_bytes": 47011,
+      "bfs_bytes": 51750,
+      "rotate_size_reduction_vs_source_pct": 4.1453,
+      "bfs_size_reduction_vs_source_pct": -5.5175,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "weighted_tangent",
+      "source_bytes": 53828,
+      "rotate_bytes": 51795,
+      "bfs_bytes": 56534,
+      "rotate_size_reduction_vs_source_pct": 3.7768,
+      "bfs_size_reduction_vs_source_pct": -5.0271,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "normal_fine_tangent",
+      "source_bytes": 54527,
+      "rotate_bytes": 52494,
+      "bfs_bytes": 57233,
+      "rotate_size_reduction_vs_source_pct": 3.7284,
+      "bfs_size_reduction_vs_source_pct": -4.9627,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "chandas_tangent",
+      "source_bytes": 54570,
+      "rotate_bytes": 52537,
+      "bfs_bytes": 57276,
+      "rotate_size_reduction_vs_source_pct": 3.7255,
+      "bfs_size_reduction_vs_source_pct": -4.9588,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "source",
+      "method": "chandas_adaptive_tangent",
+      "source_bytes": 53814,
+      "rotate_bytes": 51781,
+      "bfs_bytes": 56520,
+      "rotate_size_reduction_vs_source_pct": 3.7778,
+      "bfs_size_reduction_vs_source_pct": -5.0284,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "baseline",
+      "source_bytes": 50330,
+      "rotate_bytes": 50269,
+      "bfs_bytes": 58157,
+      "rotate_size_reduction_vs_source_pct": 0.1212,
+      "bfs_size_reduction_vs_source_pct": -15.5514,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "prithvi",
+      "source_bytes": 37041,
+      "rotate_bytes": 36980,
+      "bfs_bytes": 44868,
+      "rotate_size_reduction_vs_source_pct": 0.1647,
+      "bfs_size_reduction_vs_source_pct": -21.1306,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "tangent",
+      "source_bytes": 36077,
+      "rotate_bytes": 36016,
+      "bfs_bytes": 43904,
+      "rotate_size_reduction_vs_source_pct": 0.1691,
+      "bfs_size_reduction_vs_source_pct": -21.6953,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "weighted_tangent",
+      "source_bytes": 41869,
+      "rotate_bytes": 41808,
+      "bfs_bytes": 49696,
+      "rotate_size_reduction_vs_source_pct": 0.1457,
+      "bfs_size_reduction_vs_source_pct": -18.694,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "normal_fine_tangent",
+      "source_bytes": 42607,
+      "rotate_bytes": 42546,
+      "bfs_bytes": 50434,
+      "rotate_size_reduction_vs_source_pct": 0.1432,
+      "bfs_size_reduction_vs_source_pct": -18.3702,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "chandas_tangent",
+      "source_bytes": 42669,
+      "rotate_bytes": 42608,
+      "bfs_bytes": 50496,
+      "rotate_size_reduction_vs_source_pct": 0.143,
+      "bfs_size_reduction_vs_source_pct": -18.3435,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "bfs",
+      "method": "chandas_adaptive_tangent",
+      "source_bytes": 42421,
+      "rotate_bytes": 42360,
+      "bfs_bytes": 50248,
+      "rotate_size_reduction_vs_source_pct": 0.1438,
+      "bfs_size_reduction_vs_source_pct": -18.4508,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "baseline",
+      "source_bytes": 80383,
+      "rotate_bytes": 79222,
+      "bfs_bytes": 86194,
+      "rotate_size_reduction_vs_source_pct": 1.4443,
+      "bfs_size_reduction_vs_source_pct": -7.2291,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "prithvi",
+      "source_bytes": 70430,
+      "rotate_bytes": 69269,
+      "bfs_bytes": 76241,
+      "rotate_size_reduction_vs_source_pct": 1.6484,
+      "bfs_size_reduction_vs_source_pct": -8.2507,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "tangent",
+      "source_bytes": 70387,
+      "rotate_bytes": 69226,
+      "bfs_bytes": 76198,
+      "rotate_size_reduction_vs_source_pct": 1.6495,
+      "bfs_size_reduction_vs_source_pct": -8.2558,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "weighted_tangent",
+      "source_bytes": 76483,
+      "rotate_bytes": 75322,
+      "bfs_bytes": 82294,
+      "rotate_size_reduction_vs_source_pct": 1.518,
+      "bfs_size_reduction_vs_source_pct": -7.5978,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "normal_fine_tangent",
+      "source_bytes": 77443,
+      "rotate_bytes": 76282,
+      "bfs_bytes": 83254,
+      "rotate_size_reduction_vs_source_pct": 1.4992,
+      "bfs_size_reduction_vs_source_pct": -7.5036,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "chandas_tangent",
+      "source_bytes": 77320,
+      "rotate_bytes": 76159,
+      "bfs_bytes": 83131,
+      "rotate_size_reduction_vs_source_pct": 1.5016,
+      "bfs_size_reduction_vs_source_pct": -7.5155,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    },
+    {
+      "vertex_ordering": "morton",
+      "method": "chandas_adaptive_tangent",
+      "source_bytes": 76563,
+      "rotate_bytes": 75402,
+      "bfs_bytes": 82374,
+      "rotate_size_reduction_vs_source_pct": 1.5164,
+      "bfs_size_reduction_vs_source_pct": -7.5898,
+      "topology_checks_passed": true,
+      "error_budget_checks_passed": true
+    }
+  ],
+  "validations": {
+    "benchmark_errors": 0,
+    "all_21_method_vertex_order_aggregates_passed_topology_checks": true,
+    "all_source_rotate_bfs_streams_passed_error_budget": true,
+    "triangle_winding_preserved": true
+  },
+  "conclusion": "Rotation-only improved aggregate complete bitstream sizes within each fixed vertex ordering on this synthetic fixture set. BFS face traversal made aggregate sizes larger across all seven coders and all three vertex orderings. Keep rotate available; keep BFS optional but excluded from automatic face strategy selection because it lost across this benchmark. These are six synthetic meshes, not a broad performance claim."
+}
