@@ -16,9 +16,14 @@ from typing import Any
 
 import numpy as np
 
-from .codec import CODEC_METHODS, ORDERINGS, decode_mesh, encode_mesh, load_mesh, reorder_mesh, vertex_order_for_mesh
+from .codec import (
+    CODEC_METHODS, ORDERINGS, decode_mesh, encode_mesh, load_mesh, reorder_mesh,
+    vertex_order_for_mesh, _local_tangent_frame, _parallelogram_stencils,
+    _vertex_valences, _weighted_parallelogram_prediction,
+)
 
 MESH_EXTENSIONS = {".obj", ".ply", ".stl", ".off"}
+NORMAL_FINE_RATIOS = (0.375, 0.5, 0.625, 0.75, 0.875)
 
 
 def _timed(fn, repeats: int = 3):
@@ -74,11 +79,15 @@ def _decode_simple_geometry_zlib_reference(payload: bytes) -> tuple[np.ndarray, 
 
 
 def _benchmark_coder(
-    vertices: np.ndarray, faces: np.ndarray, bits: int, repeats: int, method: str, ordering: str
+    vertices: np.ndarray, faces: np.ndarray, bits: int, repeats: int, method: str, ordering: str,
+    normal_step_ratio: float = 0.5
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
     """Benchmark one coder/ordering, then map decoded data back to source indexing."""
     payload, encode_seconds = _timed(
-        lambda: encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering), repeats
+        lambda: encode_mesh(
+            vertices, faces, bits=bits, method=method, ordering=ordering,
+            normal_step_ratio=normal_step_ratio
+        ), repeats
     )
     (decoded_vertices, decoded_faces, metadata), decode_seconds = _timed(lambda: decode_mesh(payload), repeats)
 
@@ -90,6 +99,28 @@ def _benchmark_coder(
     restored_faces = permutation[decoded_faces]
     errors = np.linalg.norm(restored_vertices - vertices, axis=1)
 
+    # For tangent coders, decompose actual reconstruction error in the local
+    # decoder frame so the normal-fine experiment can be evaluated directionally.
+    normal_component_errors: list[float] = []
+    tangential_component_errors: list[float] = []
+    if method in {"tangent", "weighted_tangent", "normal_fine_tangent"}:
+        ordered_source_vertices, ordered_source_faces, _ = reorder_mesh(vertices, faces, ordering)
+        stencils = _parallelogram_stencils(ordered_source_faces, len(decoded_vertices))
+        valences = _vertex_valences(ordered_source_faces, len(decoded_vertices)) if method != "tangent" else None
+        for i, stencil in enumerate(stencils):
+            if stencil is None:
+                continue
+            left_i, right_i, base_i = stencil
+            left, right, base = decoded_vertices[left_i], decoded_vertices[right_i], decoded_vertices[base_i]
+            prediction = (
+                _weighted_parallelogram_prediction(left, right, base, left_i, right_i, i, valences)
+                if valences is not None else left + right - base
+            )
+            frame = _local_tangent_frame(left, right, base, prediction)
+            local_error = frame.T @ (decoded_vertices[i] - ordered_source_vertices[i])
+            normal_component_errors.append(float(local_error[0]))
+            tangential_component_errors.append(float(np.linalg.norm(local_error[1:])))
+
     metrics = {
         "ordering": ordering,
         "method": method,
@@ -98,6 +129,10 @@ def _benchmark_coder(
         "decode_median_ms": round(decode_seconds * 1000, 4),
         "max_vertex_error": float(errors.max()) if errors.size else 0.0,
         "rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
+        "normal_component_rmse": float(np.sqrt(np.mean(np.square(normal_component_errors)))) if normal_component_errors else None,
+        "tangential_component_rmse": float(np.sqrt(np.mean(np.square(tangential_component_errors)))) if tangential_component_errors else None,
+        "normal_component_mae": float(np.mean(np.abs(normal_component_errors))) if normal_component_errors else None,
+        "normal_step_ratio": metadata.get("normal_step_ratio"),
         "topology_exact": bool(np.array_equal(restored_faces, faces)),
         "format_version": metadata["version"],
         "header_ordering": metadata.get("vertex_ordering", "source"),
@@ -239,11 +274,33 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         coder_metrics: dict[str, dict[str, Any]] = {}
         coder_decoded_vertices: dict[str, np.ndarray] = {}
         for method in CODEC_METHODS:
-            metrics, decoded_vertices, _ = _benchmark_coder(
-                vertices, faces, bits, repeats, method, ordering
-            )
-            coder_metrics[method] = metrics
-            coder_decoded_vertices[method] = decoded_vertices
+            if method == "normal_fine_tangent":
+                ratio_candidates = []
+                for ratio in NORMAL_FINE_RATIOS:
+                    metrics, decoded_vertices, _ = _benchmark_coder(
+                        vertices, faces, bits, repeats, method, ordering, normal_step_ratio=ratio
+                    )
+                    ratio_candidates.append(metrics)
+                selected = min(ratio_candidates, key=lambda item: (item["bytes"], item["normal_step_ratio"]))
+                selected["ratio_sweep_candidates"] = [
+                    {k: v for k, v in item.items() if k not in {"ratio_sweep_candidates"}}
+                    for item in ratio_candidates
+                ]
+                selected["ratio_sweep_count"] = len(ratio_candidates)
+                coder_metrics[method] = selected
+                coder_decoded_vertices[method] = decoded_vertices
+                # Replace decoded vertices with those produced by the selected ratio.
+                _, selected_vertices, _ = _benchmark_coder(
+                    vertices, faces, bits, repeats, method, ordering,
+                    normal_step_ratio=float(selected["normal_step_ratio"])
+                )
+                coder_decoded_vertices[method] = selected_vertices
+            else:
+                metrics, decoded_vertices, _ = _benchmark_coder(
+                    vertices, faces, bits, repeats, method, ordering
+                )
+                coder_metrics[method] = metrics
+                coder_decoded_vertices[method] = decoded_vertices
 
         baseline_metrics = coder_metrics["baseline"]
         prithvi_metrics = coder_metrics["prithvi"]
@@ -308,6 +365,10 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             "weighted_tangent_topology_exact": weighted_metrics["topology_exact"],
             "normal_fine_tangent_topology_exact": normal_fine_metrics["topology_exact"],
             "normal_fine_tangent_steps": normal_fine_metrics["tangent_residual_steps"],
+            "normal_fine_tangent_normal_step_ratio": normal_fine_metrics["normal_step_ratio"],
+            "normal_fine_tangent_normal_component_rmse": normal_fine_metrics["normal_component_rmse"],
+            "normal_fine_tangent_tangential_component_rmse": normal_fine_metrics["tangential_component_rmse"],
+            "normal_fine_tangent_ratio_sweep_candidates": normal_fine_metrics["ratio_sweep_candidates"],
             "tangent_predictive_vertices": tangent_metrics["predictive_vertices"],
             "weighted_tangent_predictive_vertices": weighted_metrics["predictive_vertices"],
             "tangent_residual_step": tangent_metrics["tangent_residual_step"],
@@ -356,7 +417,18 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         ),
     )
     adaptive_encode_sweep_ms = round(
-        sum(item[2]["encode_median_ms"] for item in candidates), 4
+        sum(
+            result["candidate_metrics"][method]["encode_median_ms"]
+            for result in ordering_results
+            for method in CODEC_METHODS
+            if method != "normal_fine_tangent"
+        )
+        + sum(
+            candidate["encode_median_ms"]
+            for result in ordering_results
+            for candidate in result["candidate_metrics"]["normal_fine_tangent"]["ratio_sweep_candidates"]
+        ),
+        4,
     )
 
     row: dict[str, Any] = {
@@ -415,6 +487,10 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "normal_fine_tangent_geometry_rmse_vertex_distance": source["normal_fine_tangent_rmse_vertex_distance"],
         "normal_fine_tangent_topology_exact": source["normal_fine_tangent_topology_exact"],
         "normal_fine_tangent_steps": source["normal_fine_tangent_steps"],
+        "normal_fine_tangent_normal_step_ratio": source["normal_fine_tangent_normal_step_ratio"],
+        "normal_fine_tangent_normal_component_rmse": source["normal_fine_tangent_normal_component_rmse"],
+        "normal_fine_tangent_tangential_component_rmse": source["normal_fine_tangent_tangential_component_rmse"],
+        "normal_fine_tangent_ratio_sweep_candidates": source["normal_fine_tangent_ratio_sweep_candidates"],
         "draco_bytes": source["draco_bytes"],
         "draco_size_reduction_vs_baseline_pct": source["draco_size_reduction_vs_baseline_pct"],
         "draco_encode_median_ms": source["draco_encode_median_ms"],
