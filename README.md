@@ -38,22 +38,22 @@ with angle-derived weights inspired by the referenced research. This is a resear
 
 ### Non-uniform normal/tangent quantization (MO3D v5)
 
-Let the equal-step local-frame quantizer use a step `s = D/(sqrt(3)*L)`, where `D` is the bounding-box diagonal and `L = 2^B - 1`. The normal-fine variant uses
+Let the equal-step local-frame quantizer use a step `s = D/(sqrt(3)*L)`, where `D` is the bounding-box diagonal and `L = 2^B - 1`. MO3D v5 tests a normal-step ratio `r` and uses
 
 ```text
-s_normal = s / 2
-s_tangent = s * sqrt(11 / 8)   # for each of the two tangential components
+s_normal  = r * s
+s_tangent = s * sqrt((3 - r^2) / 2)   # for each tangential component
 ```
 
-This preserves the squared step budget:
+for `r` in `{0.375, 0.5, 0.625, 0.75, 0.875}`. Smaller `r` means finer quantization along the surface normal. This preserves the squared step budget:
 
 ```text
 s_normal^2 + 2 * s_tangent^2 = 3 * s^2
 ```
 
-and therefore the same conservative Euclidean rounding-error ceiling `D/(2*L)`. The intent is to spend precision in the normal direction, which is more directly related to surface shape, while allowing somewhat coarser representation along the surface. It is a hypothesis to measure, not a guaranteed rate-distortion improvement. We compare actual file size, maximum vertex error and RMSE on each mesh.
+and therefore the same conservative per-step Euclidean rounding-error ceiling `D/(2*L)`. The encoder records the actual three steps in the stream header. The benchmark selects the smallest ratio candidate that remains within the baseline's measured maximum-error budget, then reports normal- and tangent-direction reconstruction error separately. This is a hypothesis to measure, not a guaranteed rate-distortion improvement.
 
-**Adaptive option:** `--method auto` tests all five in-house coders under source, BFS, and Morton orderings and returns the shortest resulting bitstream. This is a rate-first search over 15 candidates, so encoding can be much slower; it is useful when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
+**Adaptive option:** `--method auto` tests the four ordinary in-house coders under source, BFS, and Morton orderings and tests five normal-step ratios for MO3D v5 under each ordering. That is up to 27 candidates per mesh, so encoding can be much slower; use it when file size matters more than encode time. The Draco comparison uses a bit-depth sweep and selects the smallest Draco stream that meets the baseline's conservative per-mesh maximum-error bound.
 
 - **source:** original vertex order.
 - **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
@@ -133,7 +133,7 @@ python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid.mo3d 
 python -m middleout3d encode samples/icosphere.obj --out results/icosphere-weighted.mo3d --bits 16 --method weighted_tangent --ordering bfs
 
 # Try finer precision along the local surface normal
-python -m middleout3d encode samples/icosphere.obj --out results/icosphere-normal-fine.mo3d --bits 16 --method normal_fine_tangent --ordering bfs
+python -m middleout3d encode samples/icosphere.obj --out results/icosphere-normal-fine.mo3d --bits 16 --method normal_fine_tangent --ordering bfs --normal-step-ratio 0.375
 
 # Search all four coders and all three orderings, retaining the smallest bitstream
 python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-auto.mo3d --bits 16 --method auto
@@ -157,7 +157,9 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 - `mo3d_lossy_geometry_bytes`: absolute-coordinate baseline size containing only geometry and triangle topology.
 - `prithvi_bytes`, `tangent_bytes`, `weighted_tangent_bytes`, and `normal_fine_tangent_bytes`: total coder sizes for each ordering.
 - `*_size_reduction_vs_baseline_pct`: size difference relative to the absolute baseline under the same ordering.
-- `normal_fine_tangent_steps`: per-axis local-frame quantization steps `[s_normal, s_tangent, s_tangent]` used by MO3D v5.
+- `normal_fine_tangent_steps` and `normal_fine_tangent_normal_step_ratio`: selected local-frame quantization steps and ratio for MO3D v5.
+- `normal_fine_tangent_normal_component_rmse` / `normal_fine_tangent_tangential_component_rmse`: reconstruction errors projected into the decoder's local normal and tangent axes.
+- `normal_fine_tangent_ratio_sweep_candidates`: per-ratio size, timing, geometry-error, and directional-error results.
 - `*_geometry_max_vertex_error` and `*_geometry_rmse_vertex_distance`: measured distortion for each coder.
 - `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the four in-house coders and three orderings for that mesh.
 - `adaptive_encode_sweep_estimate_ms`: sum of the in-house candidate median encode times, a rough estimate of the work an exhaustive search requires.
