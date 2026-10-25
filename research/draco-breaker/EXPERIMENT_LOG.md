@@ -81,3 +81,17 @@ Terms must include estimated signaling/model overhead, not just raw residual ent
 - Root cause: per-mesh JSON rows included `rotate_dp_face_stream` and aggregate rows computed DP reduction percentages, but per-mesh rows omitted `rotate_dp_size_reduction_vs_source_pct` and `rotate_dp_size_reduction_vs_rotate_pct`. The CSV writer indexed those missing fields, causing the reported `KeyError`. Aggregate DP error-budget and topology flags were also missing even though all four strategies were benchmarked.
 - Fix in this revision: emit both DP percentages for every per-mesh result; include DP validity flags in aggregates; test JSON rows, aggregate rows and CSV headers/values with a deterministic small mesh; make CI explicitly validate the aggregate DP schema.
 - The failed run remains recorded as a failure. This patch is not considered validated until a subsequent test-and-benchmark workflow succeeds and archives its measured results.
+
+
+## E001 — Dynamic-programming cyclic face rotation
+
+- GitHub Actions run: https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40224966639
+- Source commit tested: f18ba24d3c9570778119acdcaca290292b739ad3.
+- Change: added rotate_dp, a three-state dynamic program that minimizes exact uncompressed signed-varint byte cost across cyclic rotations in fixed face order. Complexity is O(F) time and O(F) backpointer storage.
+- Rationale: greedy rotation minimizes each triangle's cost conditioned on the previous index but may sacrifice a better continuation; DP preserves the last-index state needed for the optimal global raw-varint sequence.
+- Commands actually run: python -m unittest discover -s tests -v; python -m middleout3d benchmark-connectivity samples --out results/draco-breaker-rotate-dp.json --bits 16 --repeats 3.
+- Configuration: 6 deterministic synthetic fixtures, 7 codec methods, 3 vertex orderings, 16-bit positions, 3 timing repetitions.
+- Actual complete-payload totals across all fixed mesh/method/vertex-order cases: source=1198590 B; greedy_rotate=1175805 B; DP_rotate=1173698 B; BFS=1312998 B; DP_vs_greedy=+0.1792%; case wins/ties/losses=35/0/91 of 126.
+- All strategies were required to pass exact oriented topology and the same position-error budget; workflow fails if any check fails. Per-case raw results and timing medians are in results/draco-breaker-rotate-dp.json and .csv.
+- Caveat: the DP objective is raw varint bytes, while the benchmark decision uses actual complete compressed MO3D payload bytes after zlib and headers. Synthetic fixtures are development data; this is not a Draco-vs-MO3D result.
+- Next: if DP improves actual bytes, validate on held-out licensed meshes and inspect encode-time overhead; otherwise keep it experimental and test better objectives.
