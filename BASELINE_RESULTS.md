@@ -38,7 +38,7 @@ Negative size reduction means Prithvi produced a larger file. Wall-clock measure
 
 ## Mathematical idea
 
-For quantized integer vertex coordinate (Q_i\), the Prithvi encoder chooses the greatest adjacent vertex index below (i\), denoted (p(i)\). If one exists, it predicts (\widehat{Q}_i=Q_{p(i)}\); otherwise it predicts zero. It stores the signed residual (r_i=Q_i-\widehat{Q}_i\), zigzag maps it to a non-negative integer, encodes it as a varint, and compresses the stream with zlib. The decoder reconstructs in index order with (Q_i=\widehat{Q}_i+r_i\). The parent rule is deterministic from triangle connectivity, so a separate parent list is unnecessary.
+For quantized integer vertex coordinate `Q_i`, the Prithvi encoder chooses the greatest adjacent vertex index below `i`, denoted `p(i)`. If one exists, it predicts `Q_hat_i = Q_{p(i)}`; otherwise it predicts zero. It stores the signed residual `r_i = Q_i - Q_hat_i`, maps signed values to non-negative integers with zigzag coding, encodes them as varints, and compresses the stream with zlib. The decoder reconstructs in index order with `Q_i = Q_hat_i + r_i`. The parent rule is deterministic from triangle connectivity, so a separate parent list is unnecessary.
 
 The “Prithvi” name is a modern analogy to Atharvaveda 12.1’s descriptions of varied terrain supported by Earth; it is not a claim that the ancient text contains this compression algorithm.
 
