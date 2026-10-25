@@ -319,6 +319,7 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         weighted_metrics = coder_metrics["weighted_tangent"]
         normal_fine_metrics = coder_metrics["normal_fine_tangent"]
         chandas_metrics = coder_metrics["chandas_tangent"]
+        chandas_adaptive_metrics = coder_metrics["chandas_adaptive_tangent"]
         positions_equal = bool(
             np.array_equal(coder_decoded_vertices["baseline"], coder_decoded_vertices["prithvi"])
         )
@@ -337,6 +338,16 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             "chandas_tangent_size_reduction_vs_weighted_pct": round(
                 (1 - chandas_metrics["bytes"] / weighted_metrics["bytes"]) * 100, 4
             ) if weighted_metrics["bytes"] else None,
+            "chandas_adaptive_tangent_bytes": chandas_adaptive_metrics["bytes"],
+            "chandas_adaptive_tangent_size_reduction_vs_baseline_pct": round(
+                (1 - chandas_adaptive_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
+            "chandas_adaptive_tangent_size_reduction_vs_weighted_pct": round(
+                (1 - chandas_adaptive_metrics["bytes"] / weighted_metrics["bytes"]) * 100, 4
+            ) if weighted_metrics["bytes"] else None,
+            "chandas_adaptive_tangent_size_reduction_vs_chandas_pct": round(
+                (1 - chandas_adaptive_metrics["bytes"] / chandas_metrics["bytes"]) * 100, 4
+            ) if chandas_metrics["bytes"] else None,
             "prithvi_size_reduction_vs_baseline_pct": round(
                 (1 - prithvi_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
             ) if baseline_metrics["bytes"] else None,
@@ -370,24 +381,31 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             "normal_fine_tangent_decode_median_ms": normal_fine_metrics["decode_median_ms"],
             "chandas_tangent_encode_median_ms": chandas_metrics["encode_median_ms"],
             "chandas_tangent_decode_median_ms": chandas_metrics["decode_median_ms"],
+            "chandas_adaptive_tangent_encode_median_ms": chandas_adaptive_metrics["encode_median_ms"],
+            "chandas_adaptive_tangent_decode_median_ms": chandas_adaptive_metrics["decode_median_ms"],
             "baseline_max_vertex_error": baseline_metrics["max_vertex_error"],
             "prithvi_max_vertex_error": prithvi_metrics["max_vertex_error"],
             "tangent_max_vertex_error": tangent_metrics["max_vertex_error"],
             "weighted_tangent_max_vertex_error": weighted_metrics["max_vertex_error"],
             "normal_fine_tangent_max_vertex_error": normal_fine_metrics["max_vertex_error"],
             "chandas_tangent_max_vertex_error": chandas_metrics["max_vertex_error"],
+            "chandas_adaptive_tangent_max_vertex_error": chandas_adaptive_metrics["max_vertex_error"],
             "baseline_rmse_vertex_distance": baseline_metrics["rmse_vertex_distance"],
             "prithvi_rmse_vertex_distance": prithvi_metrics["rmse_vertex_distance"],
             "tangent_rmse_vertex_distance": tangent_metrics["rmse_vertex_distance"],
             "weighted_tangent_rmse_vertex_distance": weighted_metrics["rmse_vertex_distance"],
             "normal_fine_tangent_rmse_vertex_distance": normal_fine_metrics["rmse_vertex_distance"],
             "chandas_tangent_rmse_vertex_distance": chandas_metrics["rmse_vertex_distance"],
+            "chandas_adaptive_tangent_rmse_vertex_distance": chandas_adaptive_metrics["rmse_vertex_distance"],
             "baseline_topology_exact": baseline_metrics["topology_exact"],
             "prithvi_topology_exact": prithvi_metrics["topology_exact"],
             "tangent_topology_exact": tangent_metrics["topology_exact"],
             "weighted_tangent_topology_exact": weighted_metrics["topology_exact"],
             "normal_fine_tangent_topology_exact": normal_fine_metrics["topology_exact"],
             "chandas_tangent_topology_exact": chandas_metrics["topology_exact"],
+            "chandas_adaptive_tangent_topology_exact": chandas_adaptive_metrics["topology_exact"],
+            "chandas_adaptive_tangent_predictive_vertices": chandas_adaptive_metrics["predictive_vertices"],
+            "chandas_adaptive_tangent_residual_step": chandas_adaptive_metrics["tangent_residual_step"],
             "chandas_tangent_predictive_vertices": chandas_metrics["predictive_vertices"],
             "chandas_tangent_residual_step": chandas_metrics["tangent_residual_step"],
             "normal_fine_tangent_steps": normal_fine_metrics["tangent_residual_steps"],
@@ -506,6 +524,18 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "weighted_tangent_geometry_rmse_vertex_distance": source["weighted_tangent_rmse_vertex_distance"],
         "weighted_tangent_topology_exact": source["weighted_tangent_topology_exact"],
         "normal_fine_tangent_bytes": source["normal_fine_tangent_bytes"],
+        "chandas_tangent_bytes": source["chandas_tangent_bytes"],
+        "chandas_tangent_size_reduction_vs_baseline_pct": source["chandas_tangent_size_reduction_vs_baseline_pct"],
+        "chandas_tangent_size_reduction_vs_weighted_pct": source["chandas_tangent_size_reduction_vs_weighted_pct"],
+        "chandas_adaptive_tangent_bytes": source["chandas_adaptive_tangent_bytes"],
+        "chandas_adaptive_tangent_size_reduction_vs_baseline_pct": source["chandas_adaptive_tangent_size_reduction_vs_baseline_pct"],
+        "chandas_adaptive_tangent_size_reduction_vs_weighted_pct": source["chandas_adaptive_tangent_size_reduction_vs_weighted_pct"],
+        "chandas_adaptive_tangent_size_reduction_vs_chandas_pct": source["chandas_adaptive_tangent_size_reduction_vs_chandas_pct"],
+        "chandas_adaptive_tangent_encode_median_ms": source["chandas_adaptive_tangent_encode_median_ms"],
+        "chandas_adaptive_tangent_decode_median_ms": source["chandas_adaptive_tangent_decode_median_ms"],
+        "chandas_adaptive_tangent_geometry_max_vertex_error": source["chandas_adaptive_tangent_max_vertex_error"],
+        "chandas_adaptive_tangent_geometry_rmse_vertex_distance": source["chandas_adaptive_tangent_rmse_vertex_distance"],
+        "chandas_adaptive_tangent_topology_exact": source["chandas_adaptive_tangent_topology_exact"],
         "normal_fine_tangent_size_reduction_vs_baseline_pct": source["normal_fine_tangent_size_reduction_vs_baseline_pct"],
         "normal_fine_tangent_encode_median_ms": source["normal_fine_tangent_encode_median_ms"],
         "normal_fine_tangent_decode_median_ms": source["normal_fine_tangent_decode_median_ms"],
