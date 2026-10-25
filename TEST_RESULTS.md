@@ -46,3 +46,13 @@ Adaptive mode chose a mixture of methods and orderings. It is a size-first searc
 - The decoder has not been security-audited for hostile or arbitrarily large inputs.
 
 These tests validate correctness under the tested conditions; they do not establish production readiness or universal superiority to an established codec.
+
+
+## Predictive ordering experiment
+
+- [Predictive-ordering benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40195070244) completed successfully; the archived result is available in [JSON](results/predictive_ordering_study_2026-10-25.json) and [CSV](results/predictive_ordering_study_2026-10-25.csv).
+- Predictive ordering increased aggregate encoded sizes compared with both source and BFS order for all seven in-house coders in the six-fixture synthetic set.
+- Its one-repeat baseline encoding time summed to 411.06 ms across the six fixtures, versus 44.92 ms for BFS and 16.51 ms for source order.
+- It was removed from the auto-selection search but remains an experimental ordering. This preserves the negative result rather than letting an unproductive heuristic slow normal encoding.
+- Latest functional test matrix before the report-only commits passed across Python 3.10, 3.12, and 3.13, including remapping/round-trip tests for predictive ordering and auto selection.
+
