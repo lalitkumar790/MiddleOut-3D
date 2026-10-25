@@ -121,12 +121,19 @@ def _faces_topology_equivalent(left: np.ndarray, right: np.ndarray) -> bool:
 def _benchmark_draco(
     vertices: np.ndarray, faces: np.ndarray, bits: int, repeats: int, ordering: str
 ) -> dict[str, Any]:
-    """Benchmark Google's Draco through the optional DracoPy Python wrapper."""
+    """Benchmark Draco's normal topology-compression mode through DracoPy.
+
+    Draco may reorder point IDs for compression, so decoded vertices are mapped
+    to the reordered source with a KD-tree for an apples-to-apples error check.
+    preserve_order=True is intentionally not used here because it constrains
+    traversal/order optimizations and can dramatically inflate the bitstream.
+    """
     try:
         import DracoPy
+        from scipy.spatial import cKDTree
     except ImportError as exc:
         raise RuntimeError(
-            "DracoPy is not installed; install requirements-benchmark.txt to run the Draco comparison"
+            "Install requirements-benchmark.txt to run the Draco comparison (DracoPy + SciPy)"
         ) from exc
 
     ordered_vertices, ordered_faces, permutation = reorder_mesh(vertices, faces, ordering)
@@ -136,24 +143,42 @@ def _benchmark_draco(
             faces=ordered_faces,
             quantization_bits=bits,
             compression_level=7,
-            preserve_order=True,
+            preserve_order=False,
         ),
         repeats,
     )
     decoded, decode_seconds = _timed(lambda: DracoPy.decode(payload), repeats)
     decoded_vertices = np.asarray(decoded.points, dtype=np.float64)
     decoded_faces = np.asarray(decoded.faces, dtype=np.int64)
-    if decoded_vertices.ndim != 2 or decoded_vertices.shape != ordered_vertices.shape:
-        raise ValueError(
-            f"Draco decoded vertex shape {decoded_vertices.shape} does not match input {ordered_vertices.shape}"
-        )
+    if decoded_vertices.ndim != 2 or decoded_vertices.shape[1] != 3:
+        raise ValueError(f"Draco decoded vertex array has unexpected shape {decoded_vertices.shape}")
     if decoded_faces.ndim != 2 or decoded_faces.shape[1] != 3:
         raise ValueError(f"Draco decoded face array has unexpected shape {decoded_faces.shape}")
 
-    restored_vertices = np.empty_like(decoded_vertices)
-    restored_vertices[permutation] = decoded_vertices
-    restored_faces = permutation[decoded_faces]
-    errors = np.linalg.norm(restored_vertices - vertices, axis=1)
+    # Map each decoded point to the nearest input point. For ordinary triangle
+    # meshes this recovers Draco's point permutation after lossy quantization.
+    # Ambiguous duplicate positions are reported as a failed topology mapping
+    # rather than silently claiming exact connectivity preservation.
+    distances, decoded_to_ordered = cKDTree(ordered_vertices).query(decoded_vertices, k=1)
+    mapping_is_bijective = (
+        len(decoded_to_ordered) == len(ordered_vertices)
+        and len(np.unique(decoded_to_ordered)) == len(ordered_vertices)
+    )
+    if mapping_is_bijective:
+        decoded_to_source = permutation[np.asarray(decoded_to_ordered, dtype=np.int64)]
+        restored_vertices = np.empty_like(vertices, dtype=np.float64)
+        restored_vertices[decoded_to_source] = decoded_vertices
+        restored_faces = decoded_to_source[decoded_faces]
+        errors = np.linalg.norm(restored_vertices - vertices, axis=1)
+        topology_equivalent = _faces_topology_equivalent(restored_faces, faces)
+        topology_exact_face_order = bool(np.array_equal(restored_faces, faces))
+    else:
+        # Still report a meaningful nearest-point distortion, but make the
+        # ambiguous vertex correspondence explicit in the topology result.
+        errors = np.asarray(distances, dtype=np.float64)
+        topology_equivalent = False
+        topology_exact_face_order = False
+
     return {
         "ordering": ordering,
         "bytes": len(payload),
@@ -161,11 +186,12 @@ def _benchmark_draco(
         "decode_median_ms": round(decode_seconds * 1000, 4),
         "max_vertex_error": float(errors.max()) if errors.size else 0.0,
         "rmse_vertex_distance": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
-        "topology_equivalent": _faces_topology_equivalent(restored_faces, faces),
-        "topology_exact_face_order": bool(np.array_equal(restored_faces, faces)),
+        "topology_equivalent": bool(topology_equivalent),
+        "topology_exact_face_order": bool(topology_exact_face_order),
+        "vertex_correspondence_bijective": bool(mapping_is_bijective),
         "quantization_bits": bits,
         "compression_level": 7,
-        "ordering": ordering,
+        "preserve_order": False,
     }
 
 
