@@ -1,0 +1,20 @@
+{
+  "project": "MiddleOut-3D",
+  "report_version": "v0.1-summary",
+  "configuration": {
+    "position_bits": 16,
+    "repeats": 5,
+    "dataset": "six deterministic synthetic OBJ fixtures",
+    "timing_statistic": "median wall-clock time",
+    "note": "Curated summary from the initial local benchmark; rerun the benchmark workflow for machine-generated full reports."
+  },
+  "results": [
+    {"name":"box.obj","source_bytes":425,"simple_reference_bytes":346,"mo3d_bytes":393,"size_change_vs_reference_pct":-13.58,"encode_median_ms":0.088,"decode_median_ms":0.060,"max_vertex_error":0},
+    {"name":"cylinder.obj","source_bytes":5591,"simple_reference_bytes":1100,"mo3d_bytes":962,"size_change_vs_reference_pct":12.55,"encode_median_ms":0.281,"decode_median_ms":0.175,"max_vertex_error":1.08e-05},
+    {"name":"icosphere.obj","source_bytes":173885,"simple_reference_bytes":29525,"mo3d_bytes":30265,"size_change_vs_reference_pct":-2.51,"encode_median_ms":10.653,"decode_median_ms":5.523,"max_vertex_error":2.41e-05},
+    {"name":"torus.obj","source_bytes":55051,"simple_reference_bytes":8669,"mo3d_bytes":3690,"size_change_vs_reference_pct":57.43,"encode_median_ms":1.648,"decode_median_ms":1.256,"max_vertex_error":2.74e-05},
+    {"name":"uv_sphere.obj","source_bytes":121869,"simple_reference_bytes":17040,"mo3d_bytes":8212,"size_change_vs_reference_pct":51.81,"encode_median_ms":3.324,"decode_median_ms":2.761,"max_vertex_error":2.52e-05},
+    {"name":"wavy_grid.obj","source_bytes":243639,"simple_reference_bytes":39974,"mo3d_bytes":17678,"size_change_vs_reference_pct":55.78,"encode_median_ms":6.316,"decode_median_ms":5.535,"max_vertex_error":2.12e-05}
+  ],
+  "interpretation": "This is a preliminary mixed result against a narrow reference that uses the same quantized positions and topology but fixed-width indices. It is not a comparison against Draco or LZ4. Comparing MO3D bytes with source OBJ bytes is not fair because MO3D is lossy and drops attributes."
+}
