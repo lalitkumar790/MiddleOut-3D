@@ -34,3 +34,7 @@ jobs:
         run: |
           python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere.mo3d --bits 16
           python -m middleout3d decode /tmp/icosphere.mo3d --out /tmp/icosphere-decoded.obj
+          python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere-weighted.mo3d --bits 16 --method weighted_tangent --ordering bfs
+          python -m middleout3d decode /tmp/icosphere-weighted.mo3d --out /tmp/icosphere-weighted-decoded.obj
+          python -m middleout3d encode samples/icosphere.obj --out /tmp/icosphere-auto.mo3d --bits 16 --method auto
+          python -m middleout3d decode /tmp/icosphere-auto.mo3d --out /tmp/icosphere-auto-decoded.obj
