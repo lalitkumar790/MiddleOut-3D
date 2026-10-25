@@ -48,13 +48,14 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | Draco B | Draco bits | error target met | Draco max error | adaptive best")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | normal-fine B | normal-fine save % | Draco B | Draco bits | error target met | adaptive best")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
                       f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
-                      f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | {result["draco_bytes"]} | '
-                      f'{result["draco_quantization_bits"]} | {result["draco_error_budget_met"]} | {result["draco_max_vertex_error"]} | '
+                      f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | {result["normal_fine_tangent_bytes"]} | '
+                      f'{result["normal_fine_tangent_size_reduction_vs_baseline_pct"]}% | {result["draco_bytes"]} | '
+                      f'{result["draco_quantization_bits"]} | {result["draco_error_budget_met"]} | '
                       f'{row["best_candidate_method"]}/{row["best_candidate_ordering"]}/{row["best_candidate_bytes"]} B'
                   )
           if report["errors"]:
@@ -64,7 +65,7 @@ jobs:
               for result in row["ordering_results"]:
                   if not result["quantized_positions_equal"]:
                       raise SystemExit(f'Prithvi quantized positions differ: {row["name"]}/{result["ordering"]}')
-                  for method in ("baseline", "prithvi", "tangent", "weighted_tangent"):
+                  for method in ("baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent"):
                       metrics = result["candidate_metrics"][method]
                       if not metrics["topology_exact"]:
                           raise SystemExit(f'Topology reconstruction failed: {row["name"]}/{result["ordering"]}/{method}')
