@@ -98,6 +98,9 @@ python -m venv .venv
 # macOS/Linux: source .venv/bin/activate
 python -m pip install -r requirements.txt
 
+# Optional benchmark dependency: Google Draco comparison via DracoPy
+python -m pip install -r requirements-benchmark.txt
+
 # Generate reproducible OBJ fixtures without downloading anything
 python -m middleout3d generate-fixtures --out samples
 
@@ -113,7 +116,8 @@ python -m middleout3d encode samples/icosphere.obj --out results/icosphere-weigh
 # Search all four coders and all three orderings, retaining the smallest bitstream
 python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-auto.mo3d --bits 16 --method auto
 
-# Benchmark all candidates; reports include source, BFS, Morton, and adaptive winners
+# Benchmark MO3D candidates and Google Draco; reports include source, BFS,
+# Morton, per-mesh adaptive winner, size, timing, and reconstruction error
 python -m middleout3d benchmark samples --out results/ordering-study.json --bits 16 --repeats 5
 
 # Decode to a standard mesh file
@@ -132,8 +136,9 @@ Supported mesh input formats depend on trimesh; starter fixtures are OBJ. The de
 - `prithvi_bytes`, `tangent_bytes`, and `weighted_tangent_bytes`: total coder sizes for each ordering.
 - `*_size_reduction_vs_baseline_pct`: size difference relative to the absolute baseline under the same ordering.
 - `*_geometry_max_vertex_error` and `*_geometry_rmse_vertex_distance`: measured distortion for each coder.
-- `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the measured coder/ordering combinations for that mesh.
-- `adaptive_encode_sweep_estimate_ms`: sum of the per-candidate median encode times, a rough estimate of the work an exhaustive adaptive search requires.
+- `best_candidate_method`, `best_candidate_ordering`, and `best_candidate_bytes`: smallest bitstream among the four in-house coders and three orderings for that mesh.
+- `adaptive_encode_sweep_estimate_ms`: sum of the in-house candidate median encode times, a rough estimate of the work an exhaustive search requires.
+- `draco_bytes`, `draco_max_vertex_error`, `draco_rmse_vertex_distance`, and encode/decode timings: Google Draco baseline via DracoPy, using the same nominal quantization-bit setting. Actual distortion may differ, so interpret size and error together.
 - `mo3d_source_to_encoded_ratio`: included as a rough exploratory signal only; **it is not a fair codec comparison**, because MO3D is lossy and drops attributes.
 - `geometry_max_vertex_error` / `geometry_rmse_vertex_distance`: distortion between corresponding source vertices and reconstructed vertices.
 - `topology_exact`: verifies triangle index connectivity is unchanged.
@@ -143,7 +148,7 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 ## GitHub Actions
 
 - **Tests** run on pushes, pull requests, and manual dispatch across Python 3.10, 3.12, and 3.13. The workflow runs unit tests and CLI encode/decode smoke tests.
-- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline, Prithvi, tangent, and weighted-tangent coders under source, BFS, and Morton orderings. It checks topology and the tangent error bounds, prints per-mesh results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
+- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It installs the optional DracoPy package, compares all four in-house coders under source, BFS, and Morton orderings against Google Draco, checks topology and in-house error bounds, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
 
 ## Research roadmap
 
