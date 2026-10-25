@@ -101,6 +101,72 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
     return quantized, mins, maxs
 
 
+ORDERINGS = ("source", "bfs", "morton")
+
+
+def _morton_spread_21(values: np.ndarray) -> np.ndarray:
+    """Spread 21 input bits into every third bit of a 64-bit Morton code."""
+    x = values.astype(np.uint64, copy=False) & np.uint64(0x1FFFFF)
+    x = (x | (x << np.uint64(32))) & np.uint64(0x1F00000000FFFF)
+    x = (x | (x << np.uint64(16))) & np.uint64(0x1F0000FF0000FF)
+    x = (x | (x << np.uint64(8))) & np.uint64(0x100F00F00F00F00F)
+    x = (x | (x << np.uint64(4))) & np.uint64(0x10C30C30C30C30C3)
+    x = (x | (x << np.uint64(2))) & np.uint64(0x1249249249249249)
+    return x
+
+
+def vertex_order_for_mesh(vertices: Any, faces: Any, ordering: str = "source") -> np.ndarray:
+    """Return new-index -> original-index vertex permutation."""
+    vertices, faces = _validate_mesh(vertices, faces)
+    if ordering not in ORDERINGS:
+        raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
+    count = len(vertices)
+    if ordering == "source":
+        return np.arange(count, dtype=np.int64)
+    if ordering == "morton":
+        mins = vertices.min(axis=0)
+        spans = vertices.max(axis=0) - mins
+        safe_spans = np.where(spans == 0.0, 1.0, spans)
+        max_grid = (1 << 21) - 1
+        grid = np.rint((vertices - mins) / safe_spans * max_grid).clip(0, max_grid).astype(np.uint64)
+        codes = _morton_spread_21(grid[:, 0]) | (_morton_spread_21(grid[:, 1]) << np.uint64(1)) | (_morton_spread_21(grid[:, 2]) << np.uint64(2))
+        return np.lexsort((np.arange(count, dtype=np.int64), codes)).astype(np.int64)
+
+    # Deterministic breadth-first traversal, one sorted-neighbor queue per connected component.
+    adjacency = [set() for _ in range(count)]
+    for tri in faces:
+        a, b, c = (int(x) for x in tri)
+        for u, v in ((a, b), (b, c), (c, a)):
+            if u != v:
+                adjacency[u].add(v)
+                adjacency[v].add(u)
+    from collections import deque
+    visited = np.zeros(count, dtype=bool)
+    order = []
+    for root in range(count):
+        if visited[root]:
+            continue
+        visited[root] = True
+        queue = deque([root])
+        while queue:
+            vertex = queue.popleft()
+            order.append(vertex)
+            for neighbor in sorted(adjacency[vertex]):
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+    return np.asarray(order, dtype=np.int64)
+
+
+def reorder_mesh(vertices: Any, faces: Any, ordering: str = "source") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return reordered vertices, remapped faces, and new-index -> old-index map."""
+    vertices, faces = _validate_mesh(vertices, faces)
+    order = vertex_order_for_mesh(vertices, faces, ordering)
+    inverse = np.empty_like(order)
+    inverse[order] = np.arange(len(order), dtype=np.int64)
+    return vertices[order], inverse[faces], order
+
+
 def _mesh_parents(faces: np.ndarray, vertex_count: int) -> np.ndarray:
     """Pick each vertex's greatest lower-index mesh neighbor as its causal parent.
 
@@ -174,7 +240,7 @@ def _decode_prithvi_coordinates(coord_raw: bytes, faces: np.ndarray, vertex_coun
     return quantized
 
 
-def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline") -> bytes:
+def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, method: str = "baseline", ordering: str = "source") -> bytes:
     """Encode a triangle mesh as MO3D bytes.
 
     Args:
@@ -185,6 +251,8 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         method: "baseline" or "prithvi". Prithvi predicts each quantized vertex
             from its greatest lower-indexed adjacent vertex, coding signed
             coordinate residuals rather than absolute coordinates.
+        ordering: "source", "bfs", or "morton" controls vertex traversal order.
+            Faces are reindexed to preserve the represented surface.
 
     Geometry is lossy because coordinates are quantized. Normals, UVs, colors,
     textures, material data and source-format metadata are omitted.
@@ -195,7 +263,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError("zlib level must be an integer from 0 through 9")
     if method not in METHODS:
         raise CodecError(f"method must be one of: {', '.join(METHODS)}")
-    vertices, faces = _validate_mesh(vertices, faces)
+    vertices, faces, _ = reorder_mesh(vertices, faces, ordering)
     quantized, mins, maxs = _quantize(vertices, bits)
     if method == "prithvi":
         coord_stream = _encode_prithvi_coordinates(quantized, faces, level)
@@ -210,6 +278,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "format": "MO3D",
         "version": 2 if method == "prithvi" else 1,
         "position_bits": bits,
+        "vertex_ordering": ordering,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
         "bounds_min": mins.tolist(),
@@ -317,15 +386,15 @@ def load_mesh(path: str | Path) -> tuple[np.ndarray, np.ndarray, Any]:
     return vertices, faces, loaded
 
 
-def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline") -> dict[str, Any]:
+def encode_file(input_path: str | Path, output_path: str | Path, bits: int = 16, method: str = "baseline", ordering: str = "source") -> dict[str, Any]:
     vertices, faces, _ = load_mesh(input_path)
-    encoded = encode_mesh(vertices, faces, bits=bits, method=method)
+    encoded = encode_mesh(vertices, faces, bits=bits, method=method, ordering=ordering)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(encoded)
     return {"input": str(input_path), "output": str(output_path), "input_bytes": Path(input_path).stat().st_size,
             "output_bytes": len(encoded), "ratio": Path(input_path).stat().st_size / len(encoded),
-            "position_bits": bits, "method": method, "vertices": len(vertices), "faces": len(faces)}
+            "position_bits": bits, "method": method, "ordering": ordering, "vertices": len(vertices), "faces": len(faces)}
 
 
 def decode_file(input_path: str | Path, output_path: str | Path) -> dict[str, Any]:
