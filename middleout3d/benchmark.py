@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from .codec import ORDERINGS, decode_mesh, encode_mesh, load_mesh, reorder_mesh, vertex_order_for_mesh
+from .codec import CODEC_METHODS, ORDERINGS, decode_mesh, encode_mesh, load_mesh, vertex_order_for_mesh
 
 MESH_EXTENSIONS = {".obj", ".ply", ".stl", ".off"}
 
@@ -116,31 +116,45 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
     reference_decoded, reference_decode_seconds = _timed(
         lambda: _decode_simple_geometry_zlib_reference(reference_bytes), repeats
     )
+
     ordering_results: list[dict[str, Any]] = []
     for ordering in ORDERINGS:
-        baseline_metrics, baseline_decoded_vertices, _ = _benchmark_coder(
-            vertices, faces, bits, repeats, "baseline", ordering
+        coder_metrics: dict[str, dict[str, Any]] = {}
+        coder_decoded_vertices: dict[str, np.ndarray] = {}
+        for method in CODEC_METHODS:
+            metrics, decoded_vertices, _ = _benchmark_coder(
+                vertices, faces, bits, repeats, method, ordering
+            )
+            coder_metrics[method] = metrics
+            coder_decoded_vertices[method] = decoded_vertices
+
+        baseline_metrics = coder_metrics["baseline"]
+        prithvi_metrics = coder_metrics["prithvi"]
+        tangent_metrics = coder_metrics["tangent"]
+        weighted_metrics = coder_metrics["weighted_tangent"]
+        positions_equal = bool(
+            np.array_equal(coder_decoded_vertices["baseline"], coder_decoded_vertices["prithvi"])
         )
-        prithvi_metrics, prithvi_decoded_vertices, _ = _benchmark_coder(
-            vertices, faces, bits, repeats, "prithvi", ordering
-        )
-        tangent_metrics, _, _ = _benchmark_coder(
-            vertices, faces, bits, repeats, "tangent", ordering
-        )
-        positions_equal = bool(np.array_equal(baseline_decoded_vertices, prithvi_decoded_vertices))
-        result = {
+        result: dict[str, Any] = {
             "ordering": ordering,
             "baseline_bytes": baseline_metrics["bytes"],
             "prithvi_bytes": prithvi_metrics["bytes"],
             "tangent_bytes": tangent_metrics["bytes"],
+            "weighted_tangent_bytes": weighted_metrics["bytes"],
             "prithvi_size_reduction_vs_baseline_pct": round(
                 (1 - prithvi_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
             ) if baseline_metrics["bytes"] else None,
             "tangent_size_reduction_vs_baseline_pct": round(
                 (1 - tangent_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
             ) if baseline_metrics["bytes"] else None,
+            "weighted_tangent_size_reduction_vs_baseline_pct": round(
+                (1 - weighted_metrics["bytes"] / baseline_metrics["bytes"]) * 100, 4
+            ) if baseline_metrics["bytes"] else None,
             "tangent_size_reduction_vs_prithvi_pct": round(
                 (1 - tangent_metrics["bytes"] / prithvi_metrics["bytes"]) * 100, 4
+            ) if prithvi_metrics["bytes"] else None,
+            "weighted_tangent_size_reduction_vs_prithvi_pct": round(
+                (1 - weighted_metrics["bytes"] / prithvi_metrics["bytes"]) * 100, 4
             ) if prithvi_metrics["bytes"] else None,
             "baseline_encode_median_ms": baseline_metrics["encode_median_ms"],
             "baseline_decode_median_ms": baseline_metrics["decode_median_ms"],
@@ -148,18 +162,26 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             "prithvi_decode_median_ms": prithvi_metrics["decode_median_ms"],
             "tangent_encode_median_ms": tangent_metrics["encode_median_ms"],
             "tangent_decode_median_ms": tangent_metrics["decode_median_ms"],
+            "weighted_tangent_encode_median_ms": weighted_metrics["encode_median_ms"],
+            "weighted_tangent_decode_median_ms": weighted_metrics["decode_median_ms"],
             "baseline_max_vertex_error": baseline_metrics["max_vertex_error"],
             "prithvi_max_vertex_error": prithvi_metrics["max_vertex_error"],
             "tangent_max_vertex_error": tangent_metrics["max_vertex_error"],
+            "weighted_tangent_max_vertex_error": weighted_metrics["max_vertex_error"],
             "baseline_rmse_vertex_distance": baseline_metrics["rmse_vertex_distance"],
             "prithvi_rmse_vertex_distance": prithvi_metrics["rmse_vertex_distance"],
             "tangent_rmse_vertex_distance": tangent_metrics["rmse_vertex_distance"],
+            "weighted_tangent_rmse_vertex_distance": weighted_metrics["rmse_vertex_distance"],
             "baseline_topology_exact": baseline_metrics["topology_exact"],
             "prithvi_topology_exact": prithvi_metrics["topology_exact"],
             "tangent_topology_exact": tangent_metrics["topology_exact"],
+            "weighted_tangent_topology_exact": weighted_metrics["topology_exact"],
             "tangent_predictive_vertices": tangent_metrics["predictive_vertices"],
+            "weighted_tangent_predictive_vertices": weighted_metrics["predictive_vertices"],
             "tangent_residual_step": tangent_metrics["tangent_residual_step"],
+            "weighted_tangent_residual_step": weighted_metrics["tangent_residual_step"],
             "quantized_positions_equal": positions_equal,
+            "candidate_metrics": coder_metrics,
         }
         ordering_results.append(result)
 
@@ -170,6 +192,25 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
     )
     theoretical_error_bound = float(np.linalg.norm(per_axis_half_step))
     reference_max_error = float(np.linalg.norm(reference_decoded[0] - vertices, axis=1).max())
+
+    # A rate-first adaptive choice over the exact candidate bitstreams we tested.
+    # Ties prefer simpler/faster methods and then source order.
+    method_priority = {name: idx for idx, name in enumerate(CODEC_METHODS)}
+    ordering_priority = {name: idx for idx, name in enumerate(ORDERINGS)}
+    candidates = [
+        (method, result["ordering"], result["candidate_metrics"][method])
+        for result in ordering_results
+        for method in CODEC_METHODS
+    ]
+    best_method, best_ordering, best_metrics = min(
+        candidates,
+        key=lambda item: (
+            item[2]["bytes"], method_priority[item[0]], ordering_priority[item[1]]
+        ),
+    )
+    adaptive_encode_sweep_ms = round(
+        sum(item[2]["encode_median_ms"] for item in candidates), 4
+    )
 
     row: dict[str, Any] = {
         "file": str(path), "name": path.name,
@@ -188,8 +229,12 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
             (1 - source["baseline_bytes"] / len(reference_bytes)) * 100, 4
         ) if reference_bytes else None,
         "mo3d_lossy_geometry_bytes": source["baseline_bytes"],
-        "mo3d_source_to_encoded_ratio": round(len(original) / source["baseline_bytes"], 6) if source["baseline_bytes"] else None,
-        "mo3d_size_saved_vs_source_pct": round((1 - source["baseline_bytes"] / len(original)) * 100, 4) if original else None,
+        "mo3d_source_to_encoded_ratio": round(
+            len(original) / source["baseline_bytes"], 6
+        ) if source["baseline_bytes"] else None,
+        "mo3d_size_saved_vs_source_pct": round(
+            (1 - source["baseline_bytes"] / len(original)) * 100, 4
+        ) if original else None,
         "mo3d_coordinate_coder": "absolute-fixed-width-zlib",
         "mo3d_encode_median_ms": source["baseline_encode_median_ms"],
         "mo3d_decode_median_ms": source["baseline_decode_median_ms"],
@@ -203,35 +248,54 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         "prithvi_coordinate_coder": "prithvi-mesh-adjacency-residual-varint-zlib",
         "tangent_bytes": source["tangent_bytes"],
         "tangent_size_reduction_vs_baseline_pct": source["tangent_size_reduction_vs_baseline_pct"],
-        "tangent_size_reduction_vs_prithvi_pct": source["tangent_size_reduction_vs_prithvi_pct"],
         "tangent_encode_median_ms": source["tangent_encode_median_ms"],
         "tangent_decode_median_ms": source["tangent_decode_median_ms"],
         "tangent_geometry_max_vertex_error": source["tangent_max_vertex_error"],
         "tangent_geometry_rmse_vertex_distance": source["tangent_rmse_vertex_distance"],
         "tangent_topology_exact": source["tangent_topology_exact"],
-        "tangent_predictive_vertices": source["tangent_predictive_vertices"],
-        "tangent_residual_step": source["tangent_residual_step"],
-        "tangent_coordinate_coder": "tangent-parallelogram-residual-varint-zlib",
-        "geometry_max_vertex_error": source["baseline_max_vertex_error"],
-        "geometry_rmse_vertex_distance": source["baseline_rmse_vertex_distance"],
+        "weighted_tangent_bytes": source["weighted_tangent_bytes"],
+        "weighted_tangent_size_reduction_vs_baseline_pct": source["weighted_tangent_size_reduction_vs_baseline_pct"],
+        "weighted_tangent_encode_median_ms": source["weighted_tangent_encode_median_ms"],
+        "weighted_tangent_decode_median_ms": source["weighted_tangent_decode_median_ms"],
+        "weighted_tangent_geometry_max_vertex_error": source["weighted_tangent_max_vertex_error"],
+        "weighted_tangent_geometry_rmse_vertex_distance": source["weighted_tangent_rmse_vertex_distance"],
+        "weighted_tangent_topology_exact": source["weighted_tangent_topology_exact"],
         "bbox_diagonal": diagonal,
         "max_error_bound_estimate": theoretical_error_bound,
         "topology_exact": source["baseline_topology_exact"],
-        "attributes_preserved": ["triangle connectivity", "vertex positions (quantized)"],
+        "attributes_preserved": ["triangle connectivity", "vertex positions (quantized or bounded tangent residuals)"],
         "attributes_dropped": ["normals", "UVs", "colors", "textures", "materials", "source-format metadata"],
-        "fair_comparison_warning": "Each ordering compares baseline, Prithvi, and tangent at the same bit setting and reordered topology. Tangent uses a scalar residual step chosen to match the baseline quantizer's conservative Euclidean error bound; actual error is measured. Results are synthetic, geometry-only and lossy; source-file ratios are not fair codec comparisons. Compare against Draco with matched attributes and distortion before broader claims.",
+        "fair_comparison_warning": (
+            "Each method/order combination uses the same geometry/topology and position-bit setting. "
+            "The tangent methods use a scalar residual step chosen to match the baseline quantizer's "
+            "conservative Euclidean error bound; actual distortion is measured separately. Results are "
+            "synthetic, geometry-only and lossy. Compare against Draco with matched attributes and distortion."
+        ),
         "decoder_bytes_exact": bool(source["baseline_topology_exact"]),
         "prithvi_decoder_bytes_exact": bool(source["prithvi_topology_exact"]),
         "baseline_prithvi_quantized_positions_equal": source["quantized_positions_equal"],
+        "best_candidate_method": best_method,
+        "best_candidate_ordering": best_ordering,
+        "best_candidate_bytes": best_metrics["bytes"],
+        "best_candidate_max_vertex_error": best_metrics["max_vertex_error"],
+        "best_candidate_size_reduction_vs_source_order_baseline_pct": round(
+            (1 - best_metrics["bytes"] / source["baseline_bytes"]) * 100, 4
+        ) if source["baseline_bytes"] else None,
+        "adaptive_encode_sweep_estimate_ms": adaptive_encode_sweep_ms,
         "ordering_results": ordering_results,
         "header_version": 1,
     }
-    # Keep each ordering's important scalar columns available in the CSV report.
-    for item in ordering_results:
-        name = item["ordering"]
-        for key, value in item.items():
-            if key != "ordering":
-                row[f"{name}_{key}"] = value
+    # Flatten each candidate's scalar results into CSV columns while retaining
+    # the nested JSON record for downstream plots and analyses.
+    for result in ordering_results:
+        ordering = result["ordering"]
+        for method in CODEC_METHODS:
+            for key, value in result["candidate_metrics"][method].items():
+                if key not in {"ordering", "method"}:
+                    row[f"{ordering}_{method}_{key}"] = value
+        for key, value in result.items():
+            if key not in {"ordering", "candidate_metrics"}:
+                row[f"{ordering}_{key}"] = value
     return row
 
 
@@ -260,9 +324,9 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
         "report_version": 2,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
-        "configuration": {"position_bits": bits, "repeats": repeats, "methods": ["baseline", "prithvi", "tangent"], "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
+        "configuration": {"position_bits": bits, "repeats": repeats, "methods": list(CODEC_METHODS), "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
         "results": rows, "errors": errors,
-        "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements. The tangent method is compared with the other methods at the same conservative geometric error bound, and its actual error is reported separately.",
+        "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements. Tangent methods target the baseline's conservative geometric error bound. Auto selection chooses the shortest observed candidate bitstream across all tested methods and orderings, at increased encoding cost.",
     }
     output_json = Path(output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
