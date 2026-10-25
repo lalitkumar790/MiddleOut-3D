@@ -22,7 +22,7 @@ jobs:
       - name: Check out experimental branch
         uses: actions/checkout@v4
         with:
-          ref: \${{ github.ref }}
+          ref: ${{ github.ref }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -39,8 +39,8 @@ jobs:
         run: python -m middleout3d benchmark-ranked-connectivity samples --out results/distance-ranked-connectivity.json --bits 16 --repeats 3
       - name: Validate benchmark and archive results
         env:
-          RUN_URL: \${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}
-          SOURCE_SHA: \${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
           import json
