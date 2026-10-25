@@ -275,25 +275,36 @@ def benchmark_file(path: Path, bits: int = 16, repeats: int = 3) -> dict[str, An
         coder_decoded_vertices: dict[str, np.ndarray] = {}
         for method in CODEC_METHODS:
             if method == "normal_fine_tangent":
-                ratio_candidates = []
+                ratio_candidates: list[tuple[dict[str, Any], np.ndarray]] = []
                 for ratio in NORMAL_FINE_RATIOS:
                     metrics, decoded_vertices, _ = _benchmark_coder(
                         vertices, faces, bits, repeats, method, ordering, normal_step_ratio=ratio
                     )
-                    ratio_candidates.append(metrics)
-                selected = min(ratio_candidates, key=lambda item: (item["bytes"], item["normal_step_ratio"]))
-                selected["ratio_sweep_candidates"] = [
-                    {k: v for k, v in item.items() if k not in {"ratio_sweep_candidates"}}
-                    for item in ratio_candidates
+                    ratio_candidates.append((metrics, decoded_vertices))
+                bounds = vertices.max(axis=0) - vertices.min(axis=0)
+                error_bound = float(np.linalg.norm(bounds / (2 * ((1 << bits) - 1))))
+                eligible = [
+                    item for item in ratio_candidates
+                    if item[0]["max_vertex_error"] <= error_bound * 1.0001 + 1e-12
                 ]
-                selected["ratio_sweep_count"] = len(ratio_candidates)
-                coder_metrics[method] = selected
-                coder_decoded_vertices[method] = decoded_vertices
-                # Replace decoded vertices with those produced by the selected ratio.
-                _, selected_vertices, _ = _benchmark_coder(
-                    vertices, faces, bits, repeats, method, ordering,
-                    normal_step_ratio=float(selected["normal_step_ratio"])
+                selected_metrics, selected_vertices = min(
+                    eligible if eligible else ratio_candidates,
+                    key=lambda item: (
+                        item[0]["bytes"],
+                        item[0]["normal_step_ratio"]
+                    ) if eligible else (
+                        item[0]["max_vertex_error"] / max(error_bound, 1e-30),
+                        item[0]["bytes"],
+                        item[0]["normal_step_ratio"]
+                    )
                 )
+                selected_metrics["ratio_sweep_candidates"] = [
+                    {k: v for k, v in metrics.items() if k != "ratio_sweep_candidates"}
+                    for metrics, _ in ratio_candidates
+                ]
+                selected_metrics["ratio_sweep_count"] = len(ratio_candidates)
+                selected_metrics["error_budget_met"] = bool(eligible)
+                coder_metrics[method] = selected_metrics
                 coder_decoded_vertices[method] = selected_vertices
             else:
                 metrics, decoded_vertices, _ = _benchmark_coder(
