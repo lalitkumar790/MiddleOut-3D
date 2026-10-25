@@ -1,10 +1,9 @@
 """Experimental quantized triangle-mesh codec for MiddleOut-3D.
 
-MO3D v1 supports two coordinate coders:
-- baseline: quantized absolute XYZ values, zlib-compressed.
-- prithvi: a mesh-adjacency causal predictor followed by signed residual varints
-  and zlib. "Prithvi" is a design analogy inspired by Atharvaveda 12.1
-  (Prithvi Sukta), not a claim that the scripture describes a compression method.
+MO3D v1 stores baseline absolute quantized XYZ values; MO3D v2 adds a
+Prithvi mesh-adjacency residual coder. "Prithvi" is a design analogy inspired
+by Atharvaveda 12.1 (Prithvi Sukta), not a claim that the scripture describes
+a compression method.
 
 Both are lossy in position and omit mesh attributes outside XYZ + triangle faces.
 """
