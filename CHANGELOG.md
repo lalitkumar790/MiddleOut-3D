@@ -1,10 +1,10 @@
 ## 0.6.0 — Predictive-cost-guided ordering experiment
 
-- Added an experimental `predictive` vertex ordering that greedily prioritizes available vertices with lower estimated local residual-varint cost.
+- Added an experimental `predictive` vertex ordering that greedily prioritizes vertices with lower estimated residual-varint cost, using an O((V+E) log V) frontier traversal.
 - Extended traversal tests to cover predictive ordering in permutation validity, remapped-face correctness, and round-trip checks across the in-house coders.
-- Expanded CI benchmark coverage to compare predictive ordering against source, BFS and Morton, with Draco under the same per-mesh error target.
-- Documented its connection to pattern ordering as a modern hypothesis only; no claim is made that the method appears in Vedic or Desika-era texts.
-- The new order is experimental and should only be retained if its complete file sizes and runtime justify the added search cost.
+- Benchmarked the predictive order against source, BFS and Morton with all seven in-house coders and Draco under a matched conservative error target.
+- The first results were negative: predictive order increased total bytes for every in-house coder and cost about 9.2× BFS baseline-encoding time in the six-fixture single-run test. It remains opt-in but was removed from the `auto` search.
+- Documented Indian mathematical traditions as historical inspirations, with no claim that a modern codec appears in the ancient texts.
 
 # Changelog
 
