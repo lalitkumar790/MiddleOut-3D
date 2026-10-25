@@ -256,3 +256,20 @@ The current prototype serializes the face array as flat zigzag/varint index delt
 - Marais, Gain and Shreiner's 2007 [Distance-Ranked Connectivity Compression of Triangle Meshes](https://diglib.eg.org/items/57a65691-acc2-4d79-bdb4-0a53bf1d8011) traverses mesh edges and ranks candidate closing vertices by their distance to a predicted position. This is especially relevant to our next experiment: use geometry to choose among connectivity continuations, then code the small rank instead of writing every face index.
 
 The next algorithm experiment should target face/connectivity coding rather than adding another coordinate predictor. A safe first version should add a new, opt-in connectivity stream (preserving triangle winding), round-trip it, and compare complete serialized sizes and decoding time against the current index-delta stream and Draco. The historic connection to *Citra Paddhati* remains analogy only; these connectivity algorithms are modern mesh-compression research.
+
+
+## Face-stream experiment: rotate-only wins, BFS face traversal loses
+
+The full-payload comparison is archived in [JSON](results/face_connectivity_study_2026-10-25.json), [CSV](results/face_connectivity_study_2026-10-25.csv), and [CI run](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40196914983). It uses six deterministic synthetic meshes, 16-bit coordinates, seven in-house coordinate coders, and source/BFS/Morton vertex orderings.
+
+- **Rotate-only:** keep face row order and test its three cyclic rotations under the signed-varint delta cost model. It reduced aggregated payload size by 3.24–4.22% with source vertex order, 0.12–0.17% with BFS vertex order, and 1.44–1.65% with Morton order in the tested set.
+- **BFS face traversal:** reorders faces using the triangle dual graph and then selects cyclic starts. It made full payloads larger for every one of the 21 method/vertex-order combinations—about 4–5% larger for source vertex order and 7–22% larger for BFS/Morton vertex orders.
+- All topology and error-budget checks passed. The bytes are from six synthetic fixtures; the timing used a single repetition without separate warmup.
+
+Current implementation exposes face_ordering=source|rotate|bfs|auto. Explicit auto evaluates all three complete payloads and chooses the shortest. method=auto also uses the adaptive face strategy for every candidate. This avoids hard-coding the BFS traversal that performed poorly.
+
+## Next research target: rank-coded mesh connectivity
+
+The face experiment indicates a more promising next step is to change the *representation* of connectivity, not simply reorder its flat index stream. EdgeBreaker/CLERS, valence-driven encoding, and distance-ranked connectivity provide published baselines. In particular, distance-ranked methods choose among candidate vertices using geometric prediction and encode a small rank instead of a full vertex index.
+
+Implementation constraint: Prithvi and tangent predictors reconstruct their coordinates using faces, so a connectivity decoder that requires decoded coordinates creates a dependency cycle. Start with a new version using absolute quantized geometry first; only connect a prediction-dependent coordinate coder once the dependency order is explicitly resolved. Compare complete bitstreams at a matched error bound and keep triangle winding and manifold/non-manifold cases well-defined.
