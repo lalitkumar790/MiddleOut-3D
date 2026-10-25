@@ -349,9 +349,7 @@ def _predictive_vertex_order(vertices: np.ndarray, faces: np.ndarray) -> np.ndar
 
     def estimated_residual_cost(target: int, parent: int) -> int:
         delta = quantized[target] - quantized[parent]
-        return sum(len(_encode_varint(_zigzag_encode(int(value))) for value in ()) for value in ()) if False else sum(
-            len(_encode_varint(_zigzag_encode(int(value)))) for value in delta
-        )
+        return sum(len(_encode_varint(_zigzag_encode(int(value)))) for value in delta)
 
     visited = np.zeros(count, dtype=bool)
     versions = np.zeros(count, dtype=np.int64)
