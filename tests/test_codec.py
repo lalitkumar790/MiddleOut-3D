@@ -5,7 +5,7 @@ import numpy as np
 import trimesh
 
 from middleout3d.codec import (
-    AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
+    AUTO_FACE_ORDERINGS, AUTO_ORDERINGS, FACE_CODING_OPTIONS, FACE_ORDERINGS, CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
     _encode_chandas_sparse_signed, _decode_chandas_sparse_signed,
 )
 
@@ -285,21 +285,23 @@ class CodecTests(unittest.TestCase):
         for ordering in AUTO_ORDERINGS:
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
-            for method in methods:
-                payload = encode_mesh(
-                    self.vertices, self.faces, bits=bits, method=method, ordering=ordering
-                )
-                decoded, _, _ = decode_mesh(payload)
-                if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
-                    candidates.append(payload)
-            for ratio in (0.375, 0.5, 0.625, 0.75, 0.875):
-                payload = encode_mesh(
-                    self.vertices, self.faces, bits=bits, method="normal_fine_tangent",
-                    ordering=ordering, normal_step_ratio=ratio
-                )
-                decoded, _, _ = decode_mesh(payload)
-                if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
-                    candidates.append(payload)
+            for face_ordering in FACE_CODING_OPTIONS:
+                for method in methods:
+                    payload = encode_mesh(
+                        self.vertices, self.faces, bits=bits, method=method,
+                        ordering=ordering, face_ordering=face_ordering
+                    )
+                    decoded, _, _ = decode_mesh(payload)
+                    if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
+                        candidates.append(payload)
+                for ratio in (0.375, 0.5, 0.625, 0.75, 0.875):
+                    payload = encode_mesh(
+                        self.vertices, self.faces, bits=bits, method="normal_fine_tangent",
+                        ordering=ordering, normal_step_ratio=ratio, face_ordering=face_ordering
+                    )
+                    decoded, _, _ = decode_mesh(payload)
+                    if np.linalg.norm(decoded - ordered_vertices, axis=1).max() <= error_budget * 1.0001 + 1e-12:
+                        candidates.append(payload)
 
         automatic = encode_mesh(self.vertices, self.faces, bits=bits, method="auto")
         vertices, faces, header = decode_mesh(automatic)
@@ -307,6 +309,7 @@ class CodecTests(unittest.TestCase):
         self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
         self.assertEqual(faces.shape, self.faces.shape)
         self.assertIn(header["vertex_ordering"], AUTO_ORDERINGS)
+        self.assertIn(header.get("face_ordering", "source"), FACE_CODING_OPTIONS)
         self.assertIn(
             header["coordinate_coder"],
             (
@@ -344,7 +347,7 @@ class CodecTests(unittest.TestCase):
             ordered_vertices, ordered_faces, _ = reorder_mesh(
                 self.vertices, self.faces, vertex_ordering
             )
-            for face_ordering in FACE_ORDERINGS:
+            for face_ordering in FACE_CODING_OPTIONS:
                 for method in methods:
                     with self.subTest(vertex_ordering=vertex_ordering, face_ordering=face_ordering, method=method):
                         payload = encode_mesh(
