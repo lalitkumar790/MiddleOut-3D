@@ -60,3 +60,13 @@ E001 shows a promising 32.9206% aggregate size reduction on the six synthetic fi
 ## E003 — local candidate-set experiment (MO3D v10)
 
 v9 globally ranked every vertex at each triangle gate. It reduced complete synthetic payload bytes by 32.9206%, but remained tens of times slower than baseline. v10 is a separate version using a cKDTree to form a deterministic K=32 nearest-candidate list. When the new vertex is outside the local set, an absolute-ID escape preserves exact topology. It changes connectivity coding only; geometry and quantization error remain unchanged. SciPy is imported lazily for v10. Full-payload measurements and tests decide whether it is worth keeping.
+
+
+## E001 — complete-payload distance-rank benchmark
+
+- GitHub Actions run: https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40229723061
+- Source commit tested: 8be5ef84c40f2d5456bc1f39166a939c749a5a8c.
+- Configuration: six deterministic synthetic fixtures, 16-bit positions, source/BFS/Morton vertex orderings, and three encode/decode timing repetitions.
+- Paired summary: paired_cases=18; baseline_total_bytes=193365; distance_ranked_total_bytes=129708; local_distance_ranked_total_bytes=132040; size_reduction_pct=32.9206; local_size_reduction_pct=31.7146; local_vs_global_ranked_reduction_pct=-1.7979; wins=13; ties=0; losses=5; local_wins_vs_baseline=10; local_ties_vs_baseline=0; local_losses_vs_baseline=8; local_wins_vs_global_ranked=0; local_ties_vs_global_ranked=0; local_losses_vs_global_ranked=18; mean_baseline_connectivity_bytes=3811.7222; mean_ranked_connectivity_bytes=82.2778; all_topology_exact=True; all_error_budgets_met=True.
+- Unsupported mesh/order cases: none.
+- The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics for baseline, global rank and local rank. A positive result is limited to this synthetic corpus and does not imply Draco superiority.
