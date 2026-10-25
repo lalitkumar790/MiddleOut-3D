@@ -17,12 +17,18 @@ Relevant existing work:
 
 ## Current prototype
 
-MO3D has two versioned coordinate coding methods:
+MO3D has two versioned coordinate coding methods and three vertex traversal orderings:
 
 - **MO3D v1 baseline:** per-axis quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
 - **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, mapped to unsigned integers with zigzag coding, encoded as varints, then compressed with zlib.
 
 The separate format version prevents an older v1 decoder from interpreting Prithvi residual bytes as absolute coordinates. The current decoder reads both v1 baseline and v2 Prithvi streams.
+
+- **source:** original vertex order.
+- **bfs:** deterministic breadth-first graph traversal, with components and neighbors visited in sorted order.
+- **morton:** deterministic 3D Morton/Z-order traversal, sorting vertices by a spatial locality code.
+
+The encoder remaps triangle indices consistently, so each traversal represents the same surface. With BFS or Morton, the decoded mesh uses the selected reordered vertex indexing rather than recovering the source file's original vertex IDs; current MO3D is geometry-only and does not preserve external per-vertex attributes. The benchmark maps decoded vertices and faces back to source indexing for validation.
 
 Both methods share the same quantizer, metadata and triangle-index stream. This makes the comparison useful for isolating the coordinate coder, though the total file still contains headers and zlib stream overhead.
 
@@ -86,8 +92,15 @@ python -m middleout3d generate-fixtures --out samples
 # Run the first benchmark; JSON and CSV reports are written
 python -m middleout3d benchmark samples --out results/baseline.json --bits 16 --repeats 5
 
-# Encode a mesh
-python -m middleout3d encode samples/icosphere.obj --out results/icosphere.mo3d --bits 16 --method prithvi
+# Encode a mesh with the Prithvi predictor
+python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid.mo3d --bits 16 --method prithvi
+
+# Compare vertex ordering strategies in the benchmark; output includes source, BFS and Morton
+python -m middleout3d benchmark samples --out results/ordering-study.json --bits 16 --repeats 5
+
+# To encode explicitly with breadth-first order or spatial Morton order:
+python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-bfs.mo3d --bits 16 --method prithvi --ordering bfs
+python -m middleout3d encode samples/wavy_grid.obj --out results/wavy-grid-morton.mo3d --bits 16 --method prithvi --ordering morton
 
 # Decode to a standard mesh file
 python -m middleout3d decode results/icosphere.mo3d --out results/icosphere-restored.obj
@@ -113,7 +126,7 @@ The benchmark uses repeated runs and reports median wall-clock time. Timing is s
 ## GitHub Actions
 
 - **Tests** run on pushes, pull requests, and manual dispatch across Python 3.10, 3.12, and 3.13. The workflow runs unit tests and CLI encode/decode smoke tests.
-- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline vs Prithvi, prints per-mesh results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
+- **Benchmark sample meshes** runs on changes to the codec, tests or workflow, and can also be manually triggered from the Actions tab. It compares baseline vs Prithvi under source, BFS and Morton orderings, prints per-mesh/per-ordering results, and uploads JSON/CSV reports. Manual dispatch accepts position-bit and repeat-count inputs.
 
 ## Research roadmap
 
@@ -132,7 +145,7 @@ A published result must compare equivalent payloads and attribute sets, with the
 
 ## Security and correctness
 
-MO3D v1 is experimental. Its decoder validates headers, stream lengths, coordinate counts, and triangle indices, but this has not been audited for hostile input or production use. Do not decode untrusted files in a privileged workflow.
+MO3D v1/v2 is experimental. The decoder validates headers, stream lengths, coordinate counts, and triangle indices, but this has not been audited for hostile input or production use. Do not decode untrusted files in a privileged workflow.
 
 ## Measured baseline and Prithvi experiment
 
