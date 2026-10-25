@@ -1,3 +1,52 @@
+# Vertex ordering study: source vs BFS vs Morton
+
+**Run date:** 25 October 2026  
+**Configuration:** 16 position bits per axis, five repetitions per operation, six deterministic synthetic OBJ meshes.  
+**Workflow:** [Successful ordering benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40168239993)  
+**Results:** [JSON](results/vertex_ordering_study_2026-10-25.json) · [CSV](results/vertex_ordering_study_2026-10-25.csv)
+
+## Aggregate results
+
+The sums below include all six geometry-only encoded files. The most meaningful codec ablation is Prithvi versus the baseline *within the same ordering*.
+
+| Vertex ordering | Baseline total | Prithvi total | Prithvi size reduction vs same-order baseline | Baseline reduction vs source-order baseline |
+|---|---:|---:|---:|---:|
+| Source order | 61,956 B | 47,436 B | 23.4360% | 0.0000% |
+| **BFS** | **49,634 B** | **36,345 B** | **26.7740%** | **19.8883%** |
+| Morton | 79,687 B | 69,734 B | 12.4901% | -28.6187% |
+
+The best tested configuration here is **BFS + Prithvi**. Its 36,345-byte total is 41.3374% smaller than the source-order absolute-coordinate baseline total. That is a combined effect of traversal order and the residual coder, so it should not be attributed to Prithvi alone.
+
+## What changed per fixture?
+
+| Fixture | Source baseline / Prithvi | BFS baseline / Prithvi | Morton baseline / Prithvi |
+|---|---:|---:|---:|
+| \`box.obj\` | 519 / 620 B | 514 / 615 B | 521 / 623 B |
+| \`cylinder.obj\` | 1,088 / 1,105 B | 1,094 / 1,074 B | 1,139 / 1,134 B |
+| \`icosphere.obj\` | 30,391 / 29,526 B | 14,554 / 13,522 B | 23,231 / 22,477 B |
+| \`torus.obj\` | 3,816 / 3,638 B | 5,008 / 4,876 B | 7,167 / 6,680 B |
+| \`uv_sphere.obj\` | 8,338 / 7,253 B | 8,295 / 5,498 B | 14,401 / 13,676 B |
+| \`wavy_grid.obj\` | 17,804 / 5,294 B | 20,169 / 10,760 B | 33,228 / 25,144 B |
+
+Prithvi is smaller than the same-order baseline on four of six meshes with source order, five of six with BFS, and five of six with Morton. The box is worse under all three orderings. Morton's total byte size is substantially worse than source order on this particular fixture collection.
+
+## Interpretation
+
+- **BFS improved aggregate size.** BFS starts each connected component from the lowest unseen input index and walks neighbors in ascending order. This changes both coordinate byte patterns and face-index patterns. It substantially improved the icosphere result and the UV sphere result in this test.
+- **Morton did not win here.** It sorts vertices spatially using a 3D Morton/Z-order key, but spatial locality alone did not make the encoded coordinate plus face streams smaller for these fixtures.
+- **Prithvi is still a size/speed trade-off.** The predictor saved bytes on many fixtures, but measured encoding and decoding were slower than the same-order baseline across this run. BFS ordering also adds preprocessing work, especially on larger meshes.
+- **Correctness checks passed.** All 18 (six meshes × three orderings) baseline/Prithvi ordering combinations preserved face topology after mapping decoded indices back to the source order. At each ordering, baseline and Prithvi reconstructed the same quantized vertex coordinates.
+- **This is not a production-codec comparison.** The fixtures are deterministic synthetic meshes, measurements ran on a shared hosted runner, and the current format omits normals, UVs, colors, textures, materials, and source metadata. No comparison with Draco or LZ4 is included.
+
+## Next experiments
+
+1. Keep BFS as an optional strategy, not the default, until it is tested on real CAD/robotics/scan datasets.
+2. Reduce Python overhead in BFS adjacency construction, parent calculation, and residual coding; keep size and speed metrics separate.
+3. Test alternative BFS roots and neighbor ordering, including degree-aware visitation, without tuning against only these six fixtures.
+4. Evaluate orderings on a license-cleared real-world dataset and compare against Draco at matched distortion and attribute sets.
+
+---
+
 # MO3D Baseline vs Prithvi: First Hosted Experiment
 
 **Run date:** 25 October 2026  
