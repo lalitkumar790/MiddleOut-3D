@@ -21,10 +21,12 @@ import numpy as np
 MAGIC_V1 = b"MO3D\x01"
 MAGIC_V2 = b"MO3D\x02"
 MAGIC_V3 = b"MO3D\x03"
+MAGIC_V4 = b"MO3D\x04"
 MAGIC = MAGIC_V1  # backward-compatible name for the original v1 signature
 MAX_HEADER_BYTES = 1_000_000
 MAX_ITEMS = 100_000_000
-METHODS = ("baseline", "prithvi", "tangent")
+CODEC_METHODS = ("baseline", "prithvi", "tangent", "weighted_tangent")
+METHODS = CODEC_METHODS + ("auto",)
 
 
 class CodecError(ValueError):
@@ -269,6 +271,80 @@ def _parallelogram_stencils(faces: np.ndarray, vertex_count: int) -> list[tuple[
     return [min(options) if options else None for options in candidates]
 
 
+def _vertex_valences(faces: np.ndarray, vertex_count: int) -> np.ndarray:
+    """Count unique mesh neighbors per vertex, independent of face order."""
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]), axis=0)
+    lo = np.minimum(edges[:, 0], edges[:, 1])
+    hi = np.maximum(edges[:, 0], edges[:, 1])
+    valid = hi > lo
+    undirected = np.unique(np.column_stack((lo[valid], hi[valid])), axis=0)
+    valences = np.zeros(vertex_count, dtype=np.int64)
+    if len(undirected):
+        np.add.at(valences, undirected[:, 0], 1)
+        np.add.at(valences, undirected[:, 1], 1)
+    return valences
+
+
+def _angle_between(a: np.ndarray, b: np.ndarray) -> float:
+    """Stable unsigned angle between two 3D vectors."""
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denominator < 1e-14 or not np.isfinite(denominator):
+        return np.pi / 3.0
+    cosine = float(np.dot(a, b)) / denominator
+    return float(np.arccos(np.clip(cosine, -1.0 + 1e-12, 1.0 - 1e-12)))
+
+
+def _weighted_parallelogram_prediction(
+    left: np.ndarray,
+    right: np.ndarray,
+    base: np.ndarray,
+    left_index: int,
+    right_index: int,
+    target_index: int,
+    valences: np.ndarray,
+) -> np.ndarray:
+    """Valence-weighted parallelogram predictor inspired by Vasa et al.
+
+    Known base-triangle angles alpha and beta are combined with valence-derived
+    estimates gamma and delta for the new triangle. The formula is
+        p = w1*left + w2*right + (1-w1-w2)*base
+        w1 = (cot(beta)+cot(delta))/(cot(delta)+cot(gamma))
+        w2 = (cot(alpha)+cot(gamma))/(cot(delta)+cot(gamma)).
+    Invalid or ill-conditioned stencils fall back to the classic predictor.
+    """
+    fallback = left + right - base
+    alpha = _angle_between(right - left, base - left)
+    beta = _angle_between(left - right, base - right)
+
+    # Estimate each new-triangle angle from local valence, then normalize to pi.
+    degree_values = np.asarray(
+        [
+            max(int(valences[left_index]), 1),
+            max(int(valences[right_index]), 1),
+            max(int(valences[target_index]), 1),
+        ],
+        dtype=np.float64,
+    )
+    inverse = 1.0 / degree_values
+    angle_estimates = np.pi * inverse / float(inverse.sum())
+    gamma, delta = float(angle_estimates[0]), float(angle_estimates[1])
+
+    sin_gamma = float(np.sin(gamma))
+    sin_delta = float(np.sin(delta))
+    cot_gamma = float(np.cos(gamma)) / (sin_gamma if abs(sin_gamma) > 1e-8 else 1e-8)
+    cot_delta = float(np.cos(delta)) / (sin_delta if abs(sin_delta) > 1e-8 else 1e-8)
+    denominator = cot_delta + cot_gamma
+    if not np.isfinite(denominator) or abs(denominator) < 1e-7:
+        return fallback
+    cot_alpha = float(np.cos(alpha)) / max(abs(float(np.sin(alpha))), 1e-8)
+    cot_beta = float(np.cos(beta)) / max(abs(float(np.sin(beta))), 1e-8)
+    w1 = (cot_beta + cot_delta) / denominator
+    w2 = (cot_alpha + cot_gamma) / denominator
+    if not np.isfinite(w1) or not np.isfinite(w2) or max(abs(w1), abs(w2), abs(1.0 - w1 - w2)) > 8.0:
+        return fallback
+    return w1 * left + w2 * right + (1.0 - w1 - w2) * base
+
+
 def _local_tangent_frame(left: np.ndarray, right: np.ndarray, base: np.ndarray,
                          prediction: np.ndarray) -> np.ndarray:
     """Orthonormal frame with the base triangle normal as its first axis."""
@@ -326,13 +402,14 @@ def _tangent_residual_step(mins: np.ndarray, maxs: np.ndarray, bits: int) -> flo
 
 def _encode_tangent_coordinates(
     vertices: np.ndarray, quantized: np.ndarray, mins: np.ndarray, maxs: np.ndarray,
-    faces: np.ndarray, bits: int, level: int
+    faces: np.ndarray, bits: int, level: int, weighted: bool = False
 ) -> tuple[bytes, float, int]:
     """Encode locally framed parallelogram-prediction residuals as signed varints."""
     levels = (1 << bits) - 1
     spans = maxs - mins
     step = _tangent_residual_step(mins, maxs, bits)
     stencils = _parallelogram_stencils(faces, len(vertices))
+    valences = _vertex_valences(faces, len(vertices)) if weighted else None
     reconstructed = np.empty_like(vertices, dtype=np.float64)
     raw = bytearray()
     predicted_count = 0
@@ -345,7 +422,10 @@ def _encode_tangent_coordinates(
             continue
         left_i, right_i, base_i = stencil
         left, right, base = reconstructed[left_i], reconstructed[right_i], reconstructed[base_i]
-        prediction = left + right - base
+        prediction = (
+            _weighted_parallelogram_prediction(left, right, base, left_i, right_i, i, valences)
+            if weighted and valences is not None else left + right - base
+        )
         frame = _local_tangent_frame(left, right, base, prediction)
         local_residual = frame.T @ (vertices[i] - prediction)
         residual_codes = np.rint(local_residual / step).astype(np.int64)
@@ -358,12 +438,13 @@ def _encode_tangent_coordinates(
 
 def _decode_tangent_coordinates(
     coord_raw: bytes, faces: np.ndarray, vertex_count: int, bits: int,
-    mins: np.ndarray, maxs: np.ndarray, step: float
+    mins: np.ndarray, maxs: np.ndarray, step: float, weighted: bool = False
 ) -> np.ndarray:
     raw_values = _decode_varints(coord_raw, vertex_count * 3)
     levels = (1 << bits) - 1
     spans = maxs - mins
     stencils = _parallelogram_stencils(faces, vertex_count)
+    valences = _vertex_valences(faces, vertex_count) if weighted else None
     reconstructed = np.empty((vertex_count, 3), dtype=np.float64)
     cursor = 0
     for i, stencil in enumerate(stencils):
@@ -377,7 +458,10 @@ def _decode_tangent_coordinates(
             continue
         left_i, right_i, base_i = stencil
         left, right, base = reconstructed[left_i], reconstructed[right_i], reconstructed[base_i]
-        prediction = left + right - base
+        prediction = (
+            _weighted_parallelogram_prediction(left, right, base, left_i, right_i, i, valences)
+            if weighted and valences is not None else left + right - base
+        )
         frame = _local_tangent_frame(left, right, base, prediction)
         residual_codes = np.asarray([_zigzag_decode(int(v)) for v in values], dtype=np.float64)
         reconstructed[i] = prediction + frame @ (residual_codes * step)
@@ -407,6 +491,27 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError("zlib level must be an integer from 0 through 9")
     if method not in METHODS:
         raise CodecError(f"method must be one of: {', '.join(METHODS)}")
+    if ordering not in ORDERINGS:
+        raise CodecError(f"ordering must be one of: {', '.join(ORDERINGS)}")
+    if method == "auto":
+        best_payload = None
+        best_key = None
+        for ordering_index, candidate_ordering in enumerate(ORDERINGS):
+            for method_index, candidate_method in enumerate(CODEC_METHODS):
+                try:
+                    candidate = encode_mesh(
+                        vertices, faces, bits=bits, level=level,
+                        method=candidate_method, ordering=candidate_ordering
+                    )
+                except CodecError:
+                    continue
+                key = (len(candidate), method_index, ordering_index)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_payload = candidate
+        if best_payload is None:
+            raise CodecError("no available encoder could encode this mesh")
+        return best_payload
     vertices, faces, _ = reorder_mesh(vertices, faces, ordering)
     quantized, mins, maxs = _quantize(vertices, bits)
     tangent_step = None
@@ -414,11 +519,15 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
     if method == "prithvi":
         coord_stream = _encode_prithvi_coordinates(quantized, faces, level)
         coordinate_coder = "prithvi-mesh-adjacency-residual-varint-zlib"
-    elif method == "tangent":
+    elif method in {"tangent", "weighted_tangent"}:
+        weighted = method == "weighted_tangent"
         coord_stream, tangent_step, tangent_predictive_vertices = _encode_tangent_coordinates(
-            vertices, quantized, mins, maxs, faces, bits, level
+            vertices, quantized, mins, maxs, faces, bits, level, weighted=weighted
         )
-        coordinate_coder = "tangent-parallelogram-residual-varint-zlib"
+        coordinate_coder = (
+            "weighted-tangent-parallelogram-residual-varint-zlib"
+            if weighted else "tangent-parallelogram-residual-varint-zlib"
+        )
     else:
         coord_dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         coord_stream = zlib.compress(quantized.astype(coord_dtype).tobytes(order="C"), level)
@@ -427,7 +536,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
 
     header = {
         "format": "MO3D",
-        "version": {"baseline": 1, "prithvi": 2, "tangent": 3}[method],
+        "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
         "vertex_count": int(len(vertices)),
@@ -444,13 +553,15 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "method_note": (
             "Prithvi is an engineering analogy inspired by Atharvaveda 12.1, not a claim of a compression algorithm in the text."
             if method == "prithvi" else
+            "Valence-weighted parallelogram predictor with local tangent-frame residuals."
+            if method == "weighted_tangent" else
             "Research-inspired parallelogram predictor with local tangent-frame residuals."
             if method == "tangent" else
             "Baseline absolute-coordinate coder."
         ),
     }
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3}[method]
+    magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4}[method]
     return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
 
 
@@ -463,7 +574,7 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     if len(payload) < magic_len + 4:
         raise CodecError("not a supported MO3D bitstream")
     magic = payload[:magic_len]
-    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3):
+    if magic not in (MAGIC_V1, MAGIC_V2, MAGIC_V3, MAGIC_V4):
         raise CodecError("not a supported MO3D bitstream")
     header_len = struct.unpack(">I", payload[magic_len:magic_len + 4])[0]
     start = magic_len + 4
@@ -473,10 +584,10 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         header = json.loads(payload[start:start + header_len].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CodecError("invalid metadata header") from exc
-    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3):
+    if not isinstance(header, dict) or header.get("format") != "MO3D" or header.get("version") not in (1, 2, 3, 4):
         raise CodecError("unsupported MO3D format version")
     version = header["version"]
-    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3}[magic]
+    expected_version = {MAGIC_V1: 1, MAGIC_V2: 2, MAGIC_V3: 3, MAGIC_V4: 4}[magic]
     if version != expected_version:
         raise CodecError("MO3D magic and header version do not match")
     bits = header.get("position_bits")
@@ -520,6 +631,8 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
         raise CodecError("MO3D format version 2 requires the Prithvi residual coordinate coder")
     if version == 3 and coder != "tangent-parallelogram-residual-varint-zlib":
         raise CodecError("MO3D format version 3 requires the tangent-space residual coder")
+    if version == 4 and coder != "weighted-tangent-parallelogram-residual-varint-zlib":
+        raise CodecError("MO3D format version 4 requires the weighted tangent-space residual coder")
     if coder == "absolute-fixed-width-zlib":
         dtype = np.dtype("<u1" if bits <= 8 else "<u2" if bits <= 16 else "<u4")
         expected_coord_bytes = vertex_count * 3 * dtype.itemsize
@@ -532,11 +645,17 @@ def decode_mesh(payload: bytes) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]
     elif coder == "prithvi-mesh-adjacency-residual-varint-zlib":
         quantized = _decode_prithvi_coordinates(coord_raw, faces, vertex_count, bits)
         vertices = mins + (quantized.astype(np.float64) / levels) * (maxs - mins)
-    elif coder == "tangent-parallelogram-residual-varint-zlib":
+    elif coder in {
+        "tangent-parallelogram-residual-varint-zlib",
+        "weighted-tangent-parallelogram-residual-varint-zlib",
+    }:
         step = header.get("tangent_residual_step")
         if not isinstance(step, (int, float)) or not np.isfinite(step) or step <= 0:
             raise CodecError("invalid tangent residual quantization step")
-        vertices = _decode_tangent_coordinates(coord_raw, faces, vertex_count, bits, mins, maxs, float(step))
+        vertices = _decode_tangent_coordinates(
+            coord_raw, faces, vertex_count, bits, mins, maxs, float(step),
+            weighted=(coder == "weighted-tangent-parallelogram-residual-varint-zlib")
+        )
     else:
         raise CodecError(f"unsupported coordinate coder: {coder!r}")
     return vertices, faces, header
