@@ -1133,7 +1133,6 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         "version": {"baseline": 1, "prithvi": 2, "tangent": 3, "weighted_tangent": 4, "normal_fine_tangent": 5, "chandas_tangent": 6, "chandas_adaptive_tangent": 7}[method],
         "position_bits": bits,
         "vertex_ordering": ordering,
-        "face_ordering": face_ordering,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
         "bounds_min": mins.tolist(),
@@ -1159,6 +1158,10 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
             "Baseline absolute-coordinate coder."
         ),
     }
+    # Preserve the original compact source-order header; the new field is
+    # necessary only when the optional face traversal changes the face stream.
+    if face_ordering != "source":
+        header["face_ordering"] = face_ordering
     header_bytes = json.dumps(header, separators=(",", ":"), allow_nan=False).encode("utf-8")
     magic = {"baseline": MAGIC_V1, "prithvi": MAGIC_V2, "tangent": MAGIC_V3, "weighted_tangent": MAGIC_V4, "normal_fine_tangent": MAGIC_V5, "chandas_tangent": MAGIC_V6, "chandas_adaptive_tangent": MAGIC_V7}[method]
     return magic + struct.pack(">I", len(header_bytes)) + header_bytes + coord_stream + face_stream
