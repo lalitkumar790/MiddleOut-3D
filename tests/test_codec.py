@@ -4,7 +4,10 @@ import unittest
 import numpy as np
 import trimesh
 
-from middleout3d.codec import CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh
+from middleout3d.codec import (
+    CodecError, decode_mesh, encode_mesh, reorder_mesh, vertex_order_for_mesh,
+    _encode_chandas_sparse_signed, _decode_chandas_sparse_signed,
+)
 
 
 class CodecTests(unittest.TestCase):
@@ -52,6 +55,54 @@ class CodecTests(unittest.TestCase):
                 / (2 * ((1 << 16) - 1))
             ) + 1e-12,
         )
+
+    def test_chandas_enumerative_sparse_signed_stream_roundtrips_patterns(self):
+        cases = [
+            [],
+            [0] * 100,
+            [1, -1, 0, 0, 127, -300, 0, 5] * 20,
+            [index % 9 - 4 for index in range(129)],
+            [0] * 63 + [1] + [0] * 64 + [-2, 0, 3],
+        ]
+        for values in cases:
+            with self.subTest(length=len(values)):
+                encoded = _encode_chandas_sparse_signed(values)
+                decoded = _decode_chandas_sparse_signed(encoded, len(values))
+                self.assertEqual(decoded, values)
+
+    def test_chandas_rejects_corrupt_sparse_pattern_streams(self):
+        with self.assertRaises(CodecError):
+            _decode_chandas_sparse_signed(b"wrong", 0)
+        with self.assertRaises(CodecError):
+            _decode_chandas_sparse_signed(_encode_chandas_sparse_signed([0, 1]), 3)
+        # For a block of two values with one non-zero, rank 2 is outside C(2,1).
+        with self.assertRaises(CodecError):
+            _decode_chandas_sparse_signed(b"CHS1\\x02\\x01\\x02\\x01\\x01", 2)
+
+    def test_chandas_tangent_roundtrip_across_all_vertex_orderings(self):
+        bits = 16
+        levels = (1 << bits) - 1
+        diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        error_bound = diagonal / (2 * levels)
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=bits, method="chandas_tangent", ordering=ordering
+                )
+                vertices, faces, header = decode_mesh(payload)
+                restored_vertices = np.empty_like(vertices)
+                restored_vertices[order] = vertices
+                restored_faces = order[faces]
+                errors = np.linalg.norm(restored_vertices - self.vertices, axis=1)
+                self.assertEqual(header["version"], 6)
+                self.assertEqual(
+                    header["coordinate_coder"],
+                    "chandas-weighted-tangent-sparse-enumerative-varint-zlib",
+                )
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 6]))
+                self.assertTrue(np.array_equal(restored_faces, self.faces))
+                self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
 
     def test_prithvi_rejects_unsupported_method(self):
         with self.assertRaises(CodecError):
@@ -194,7 +245,7 @@ class CodecTests(unittest.TestCase):
         spans = self.vertices.max(axis=0) - self.vertices.min(axis=0)
         error_budget = np.linalg.norm(spans / (2 * levels))
         candidates = []
-        methods = ("baseline", "prithvi", "tangent", "weighted_tangent")
+        methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent")
         for ordering in ("source", "bfs", "morton"):
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
@@ -228,6 +279,7 @@ class CodecTests(unittest.TestCase):
                 "tangent-parallelogram-residual-varint-zlib",
                 "weighted-tangent-parallelogram-residual-varint-zlib",
                 "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib",
+                "chandas-weighted-tangent-sparse-enumerative-varint-zlib",
             ),
         )
         if header["coordinate_coder"] == "normal-fine-weighted-tangent-parallelogram-residual-varint-zlib":
