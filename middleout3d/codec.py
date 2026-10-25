@@ -310,6 +310,11 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
+# Predictive cost-guided traversal remains available experimentally, but the first
+# benchmark found it consistently larger and much slower than source/BFS. Keep
+# the user-facing rate-first auto search on the three proven orderings until a
+# better predictive objective demonstrates a win.
+AUTO_ORDERINGS = ("source", "bfs", "morton")
 
 
 def _morton_spread_21(values: np.ndarray) -> np.ndarray:
@@ -975,7 +980,7 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         levels = (1 << bits) - 1
         spans = vertices.max(axis=0) - vertices.min(axis=0)
         max_error_budget = float(np.linalg.norm(spans / (2 * levels)))
-        for ordering_index, candidate_ordering in enumerate(ORDERINGS):
+        for ordering_index, candidate_ordering in enumerate(AUTO_ORDERINGS):
             traversal = vertex_order_for_mesh(vertices, faces, candidate_ordering)
             ordered_vertices = vertices[traversal]
             for method_index, candidate_method in enumerate(CODEC_METHODS):
