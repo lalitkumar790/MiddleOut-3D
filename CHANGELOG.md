@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — Adaptive Chandas block coding
+
+- Added MO3D v7 `chandas_adaptive_tangent`, separating absolute seed coordinates from predictive residuals.
+- Added a per-64-symbol choice between direct signed varints and Piṅgala-inspired combinatorial ranking of non-zero positions; each block carries a mode flag.
+- Added MO3D v7 signature/header validation and a compatible decoder while retaining v1–v6 support.
+- Added cross-order round-trip tests, sparse/dense block tests, and CI smoke tests.
+- Extended the Draco and in-house benchmark to record adaptive Chandas size, time, topology and reconstruction error.
+- Documented the fixed v6 Chandas method's mixed/negative benchmark result; v7 is a new hypothesis and must be judged by its full-file measurements, not assumed superior.
+
 ## 0.4.0 — Chandas-inspired enumerative sparse residuals
 
 - Added MO3D v6 `chandas_tangent`, combining the weighted local tangent-space predictor with a 64-symbol sparse pattern coder.
