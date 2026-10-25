@@ -3,7 +3,7 @@ import argparse
 import json
 
 from .benchmark import benchmark_directory
-from .codec import ORDERINGS, decode_file, encode_file
+from .codec import FACE_ORDERINGS, ORDERINGS, decode_file, encode_file
 from .fixtures import generate_fixtures
 
 
@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     enc.add_argument("--bits", type=int, default=16, help="position quantization bits (8-24); lower is smaller but less accurate")
     enc.add_argument("--method", choices=["baseline", "prithvi", "tangent", "weighted_tangent", "normal_fine_tangent", "chandas_tangent", "chandas_adaptive_tangent", "auto"], default="baseline", help="coder: baseline, Prithvi, tangent predictors, Chandas sparse-pattern or adaptive Chandas tangent coder, or size-optimized auto selection")
     enc.add_argument("--ordering", choices=list(ORDERINGS), default="source", help="vertex ordering: source, breadth-first mesh traversal (bfs), or spatial Morton ordering (morton)")
+    enc.add_argument("--face-ordering", choices=list(FACE_ORDERINGS), default="source", help="triangle stream order: source face order or BFS over face adjacency with delta-cost cyclic rotation")
     enc.add_argument("--normal-step-ratio", type=float, default=0.5, help="MO3D v5 only: normal residual step relative to the equal-step budget (0<ratio<=1; smaller means finer normal precision)")
     dec = sub.add_parser("decode", help="decode a .mo3d file to OBJ, PLY, STL or OFF")
     dec.add_argument("input")
