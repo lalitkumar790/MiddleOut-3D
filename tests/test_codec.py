@@ -1,3 +1,5 @@
+import json
+import struct
 import unittest
 import numpy as np
 import trimesh
@@ -54,6 +56,29 @@ class CodecTests(unittest.TestCase):
     def test_prithvi_rejects_unsupported_method(self):
         with self.assertRaises(CodecError):
             encode_mesh(self.vertices, self.faces, method="magic")
+
+    def test_legacy_v1_header_without_new_coder_fields_still_decodes(self):
+        payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
+        header_length = struct.unpack(">I", payload[5:9])[0]
+        old_header = json.loads(payload[9:9 + header_length].decode("utf-8"))
+        old_header.pop("coordinate_coder", None)
+        old_header.pop("method_note", None)
+        legacy_header_bytes = json.dumps(old_header, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        legacy_payload = (
+            payload[:5]
+            + struct.pack(">I", len(legacy_header_bytes))
+            + legacy_header_bytes
+            + payload[9 + header_length:]
+        )
+        _, faces, header = decode_mesh(legacy_payload)
+        self.assertTrue(np.array_equal(faces, self.faces))
+        self.assertEqual(header["version"], 1)
+
+    def test_mismatched_magic_and_header_versions_are_rejected(self):
+        payload = bytearray(encode_mesh(self.vertices, self.faces, bits=16, method="prithvi"))
+        payload[4] = 1
+        with self.assertRaises(CodecError):
+            decode_mesh(payload)
 
     def test_bad_magic_rejected(self):
         with self.assertRaises(CodecError):
