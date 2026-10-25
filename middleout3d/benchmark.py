@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from .codec import CODEC_METHODS, ORDERINGS, decode_mesh, encode_mesh, load_mesh, vertex_order_for_mesh
+from .codec import CODEC_METHODS, ORDERINGS, decode_mesh, encode_mesh, load_mesh, reorder_mesh, vertex_order_for_mesh
 
 MESH_EXTENSIONS = {".obj", ".ply", ".stl", ".off"}
 
