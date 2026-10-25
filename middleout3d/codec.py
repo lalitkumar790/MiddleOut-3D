@@ -310,11 +310,10 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 
 
 ORDERINGS = ("source", "bfs", "morton", "predictive")
-FACE_ORDERINGS = ("source", "bfs")
-# BFS face traversal was larger in the first complete-stream experiment, so
-# the size-first auto search retains only source face order until a better
-# connectivity coder earns inclusion.
-AUTO_FACE_ORDERINGS = ("source",)
+FACE_CODING_OPTIONS = ("source", "rotate", "bfs")
+FACE_ORDERINGS = (*FACE_CODING_OPTIONS, "auto")
+# The auto selector compares complete payloads for source, rotation-only, and BFS.
+AUTO_FACE_ORDERINGS = ("auto",)
 # Predictive cost-guided traversal remains available experimentally, but the first
 # benchmark found it consistently larger and much slower than source/BFS. Keep
 # the user-facing rate-first auto search on the three proven orderings until a
@@ -584,69 +583,75 @@ def _encode_face_stream(faces: np.ndarray, level: int) -> bytes:
 def _reorder_faces_for_stream(
     vertices: np.ndarray, faces: np.ndarray, face_ordering: str = "source"
 ) -> np.ndarray:
-    """Reorder triangle rows and cyclic starts to reduce index-delta cost.
+    """Order triangle rows and/or cyclic starts for delta-varint connectivity.
 
-    The BFS option walks the triangle dual graph (faces are neighbors when they
-    share an edge). During the walk, each face is cyclically rotated—never
-    reversed—to minimize signed-varint cost relative to the previous index.
-    This preserves winding and the represented surface, but intentionally does
-    not preserve original face IDs/order. It is a simple connectivity-stream
-    experiment, not a replacement for EdgeBreaker or valence coding.
+    "source" preserves face rows and cyclic starts.
+    "rotate" preserves face row order but tests all three cyclic starts to
+    minimize signed-varint cost relative to the previous index.
+    "bfs" traverses the triangle dual graph and performs the same cyclic-start
+    optimization. Triangles are never reversed, so winding is preserved.
     """
-    if face_ordering not in FACE_ORDERINGS:
-        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
+    if face_ordering not in FACE_CODING_OPTIONS:
+        raise CodecError(f"face_ordering must be one of: {', '.join(FACE_CODING_OPTIONS)}")
+    faces = np.asarray(faces, dtype=np.int64)
     if face_ordering == "source":
-        return np.asarray(faces, dtype=np.int64)
+        return faces.copy()
 
     face_count = len(faces)
     if face_count < 2:
-        return np.asarray(faces, dtype=np.int64)
-    edge_faces: dict[tuple[int, int], list[int]] = {}
-    for face_index, tri in enumerate(faces):
-        a, b, c = (int(x) for x in tri)
-        for u, v in ((a, b), (b, c), (c, a)):
-            if u == v:
-                continue
-            edge = (u, v) if u < v else (v, u)
-            edge_faces.setdefault(edge, []).append(face_index)
+        return faces.copy()
 
-    adjacent = [set() for _ in range(face_count)]
-    for incident in edge_faces.values():
-        unique = sorted(set(incident))
-        for index, left in enumerate(unique):
-            for right in unique[index + 1:]:
-                adjacent[left].add(right)
-                adjacent[right].add(left)
+    if face_ordering == "rotate":
+        traversal = list(range(face_count))
+    else:
+        edge_faces: dict[tuple[int, int], list[int]] = {}
+        for face_index, tri in enumerate(faces):
+            a, b, c = (int(x) for x in tri)
+            for u, v in ((a, b), (b, c), (c, a)):
+                if u == v:
+                    continue
+                edge = (u, v) if u < v else (v, u)
+                edge_faces.setdefault(edge, []).append(face_index)
 
-    areas = np.zeros(face_count, dtype=np.float64)
-    for face_index, tri in enumerate(faces):
-        a, b, c = (int(x) for x in tri)
-        areas[face_index] = float(np.linalg.norm(np.cross(vertices[b] - vertices[a], vertices[c] - vertices[a])))
+        adjacent = [set() for _ in range(face_count)]
+        for incident in edge_faces.values():
+            unique = sorted(set(incident))
+            for index, left in enumerate(unique):
+                for right in unique[index + 1:]:
+                    adjacent[left].add(right)
+                    adjacent[right].add(left)
 
-    visited = np.zeros(face_count, dtype=bool)
-    traversal: list[int] = []
-    from collections import deque
-    while len(traversal) < face_count:
-        unseen = np.flatnonzero(~visited)
-        if unseen.size == 0:
-            break
-        # Largest-area face is a stable seed; original face index breaks ties.
-        seed = max((int(i) for i in unseen), key=lambda i: (areas[i], -i))
-        queue = deque([seed])
-        visited[seed] = True
-        while queue:
-            face_index = queue.popleft()
-            traversal.append(face_index)
-            for neighbor in sorted(adjacent[face_index]):
-                if not visited[neighbor]:
-                    visited[neighbor] = True
-                    queue.append(neighbor)
+        areas = np.zeros(face_count, dtype=np.float64)
+        for face_index, tri in enumerate(faces):
+            a, b, c = (int(x) for x in tri)
+            areas[face_index] = float(np.linalg.norm(
+                np.cross(vertices[b] - vertices[a], vertices[c] - vertices[a])
+            ))
+
+        visited = np.zeros(face_count, dtype=bool)
+        traversal = []
+        from collections import deque
+        while len(traversal) < face_count:
+            unseen = np.flatnonzero(~visited)
+            if unseen.size == 0:
+                break
+            seed = max((int(i) for i in unseen), key=lambda i: (areas[i], -i))
+            queue = deque([seed])
+            visited[seed] = True
+            while queue:
+                face_index = queue.popleft()
+                traversal.append(face_index)
+                for neighbor in sorted(adjacent[face_index]):
+                    if not visited[neighbor]:
+                        visited[neighbor] = True
+                        queue.append(neighbor)
 
     reordered: list[tuple[int, int, int]] = []
     previous = 0
     for face_index in traversal:
         a, b, c = (int(x) for x in faces[face_index])
         rotations = ((a, b, c), (b, c, a), (c, a, b))
+
         def delta_cost(tri: tuple[int, int, int]) -> int:
             total = 0
             last = previous
@@ -654,6 +659,7 @@ def _reorder_faces_for_stream(
                 total += len(_encode_varint(_zigzag_encode(value - last)))
                 last = value
             return total
+
         chosen = min(enumerate(rotations), key=lambda item: (delta_cost(item[1]), item[0]))[1]
         reordered.append(chosen)
         previous = chosen[-1]
@@ -1060,6 +1066,23 @@ def encode_mesh(vertices: Any, faces: Any, bits: int = 16, level: int = 6, metho
         raise CodecError(f"face_ordering must be one of: {', '.join(FACE_ORDERINGS)}")
     if not isinstance(normal_step_ratio, (int, float)) or isinstance(normal_step_ratio, bool) or not np.isfinite(normal_step_ratio) or not 0.0 < normal_step_ratio <= 1.0:
         raise CodecError("normal_step_ratio must be in the interval (0, 1]")
+    if face_ordering == "auto" and method != "auto":
+        candidates = [
+            (
+                len(payload),
+                option_index,
+                payload,
+            )
+            for option_index, option in enumerate(FACE_CODING_OPTIONS)
+            for payload in [
+                encode_mesh(
+                    vertices, faces, bits=bits, level=level, method=method,
+                    ordering=ordering, normal_step_ratio=normal_step_ratio,
+                    face_ordering=option,
+                )
+            ]
+        ]
+        return min(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
     if method == "auto":
         best_payload = None
         best_key = None
