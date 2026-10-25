@@ -51,6 +51,18 @@ jobs:
           report = json.loads(path.read_text(encoding="utf-8"))
           if report["errors"]:
               raise SystemExit(f"Benchmark errors: {report['errors']}")
+          aggregate_fields = (
+              "rotate_dp_size_reduction_vs_source_pct",
+              "rotate_dp_size_reduction_vs_rotate_pct",
+              "rotate_dp_error_checks_passed",
+              "rotate_dp_topology_checks_passed",
+          )
+          for row in report["aggregate"]:
+              missing = [field for field in aggregate_fields if field not in row]
+              if missing:
+                  raise SystemExit(f"Aggregate schema missing fields {missing}: {row}")
+              if not row["rotate_dp_error_checks_passed"] or not row["rotate_dp_topology_checks_passed"]:
+                  raise SystemExit(f"DP aggregate validation failed: {row}")
           strategies = ("source", "rotate", "rotate_dp", "bfs")
           for row in report["results"]:
               for strategy in strategies:

@@ -73,3 +73,11 @@ Terms must include estimated signaling/model overhead, not just raw residual ent
 - Falsification check: compare complete MO3D payload sizes after zlib, not merely the raw-varint objective; verify exact triangle topology and identical position-error budget.
 - Commands run in this chat: GitHub API source reads and source transformations only. No Python test, build, or benchmark has run in this execution turn yet.
 - Next: GitHub Actions will run tests and a 3-repeat synthetic benchmark, then commit raw JSON/CSV results and measured summary to this branch. No win is claimed until that run succeeds.
+
+
+## 2026-10-26 — E001 CI failure follow-up: benchmark report schema
+
+- The first run of the DP face-rotation workflow ([run 40219040601](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40219040601)) passed all 28 existing unit tests but failed in the benchmark command while writing CSV.
+- Root cause: per-mesh JSON rows included `rotate_dp_face_stream` and aggregate rows computed DP reduction percentages, but per-mesh rows omitted `rotate_dp_size_reduction_vs_source_pct` and `rotate_dp_size_reduction_vs_rotate_pct`. The CSV writer indexed those missing fields, causing the reported `KeyError`. Aggregate DP error-budget and topology flags were also missing even though all four strategies were benchmarked.
+- Fix in this revision: emit both DP percentages for every per-mesh result; include DP validity flags in aggregates; test JSON rows, aggregate rows and CSV headers/values with a deterministic small mesh; make CI explicitly validate the aggregate DP schema.
+- The failed run remains recorded as a failure. This patch is not considered validated until a subsequent test-and-benchmark workflow succeeds and archives its measured results.

@@ -123,6 +123,12 @@ def benchmark_connectivity_file(path: Path, bits: int = 16, repeats: int = 1) ->
                 "rotate_size_reduction_vs_source_pct": round(
                     (1 - rotate["bytes"] / source["bytes"]) * 100, 4
                 ) if source["bytes"] else None,
+                "rotate_dp_size_reduction_vs_source_pct": round(
+                    (1 - rotate_dp["bytes"] / source["bytes"]) * 100, 4
+                ) if source["bytes"] else None,
+                "rotate_dp_size_reduction_vs_rotate_pct": round(
+                    (1 - rotate_dp["bytes"] / rotate["bytes"]) * 100, 4
+                ) if rotate["bytes"] else None,
                 "bfs_size_reduction_vs_source_pct": round(
                     (1 - bfs["bytes"] / source["bytes"]) * 100, 4
                 ) if source["bytes"] else None,
@@ -171,9 +177,11 @@ def benchmark_connectivity_directory(
             "bfs_total_bytes": 0,
             "source_error_checks_passed": True,
             "rotate_error_checks_passed": True,
+            "rotate_dp_error_checks_passed": True,
             "bfs_error_checks_passed": True,
             "source_topology_checks_passed": True,
             "rotate_topology_checks_passed": True,
+            "rotate_dp_topology_checks_passed": True,
             "bfs_topology_checks_passed": True,
         })
         entry["mesh_count"] += 1
@@ -183,9 +191,11 @@ def benchmark_connectivity_directory(
         entry["bfs_total_bytes"] += row["bfs_face_stream"]["bytes"]
         entry["source_error_checks_passed"] &= row["source_face_stream"]["error_budget_met"]
         entry["rotate_error_checks_passed"] &= row["rotate_face_stream"]["error_budget_met"]
+        entry["rotate_dp_error_checks_passed"] &= row["rotate_dp_face_stream"]["error_budget_met"]
         entry["bfs_error_checks_passed"] &= row["bfs_face_stream"]["error_budget_met"]
         entry["source_topology_checks_passed"] &= row["source_face_stream"]["topology_exact"]
         entry["rotate_topology_checks_passed"] &= row["rotate_face_stream"]["topology_exact"]
+        entry["rotate_dp_topology_checks_passed"] &= row["rotate_dp_face_stream"]["topology_exact"]
         entry["bfs_topology_checks_passed"] &= row["bfs_face_stream"]["topology_exact"]
     aggregates = list(grouped.values())
     for row in aggregates:
@@ -227,8 +237,9 @@ def benchmark_connectivity_directory(
         "interpretation_note": (
             "Greedy rotation chooses the locally cheapest cyclic start. rotate_dp uses a "
             "three-state dynamic program to minimize total raw signed-varint byte count "
-            "for fixed face order. BFS traverses the triangle dual graph. Triangle winding "
-            "is preserved; reported bytes include the complete MO3D bitstream."
+            "for fixed face order. Size-reduction metrics are emitted consistently in both "
+            "per-mesh rows and aggregate rows. BFS traverses the triangle dual graph. Triangle "
+            "winding is preserved; reported bytes include the complete MO3D bitstream."
         ),
     }
     output_json = Path(output_json)
