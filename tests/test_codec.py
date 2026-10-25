@@ -84,7 +84,7 @@ class CodecTests(unittest.TestCase):
         levels = (1 << bits) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
         error_bound = diagonal / (2 * levels)
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 payload = encode_mesh(
@@ -109,7 +109,7 @@ class CodecTests(unittest.TestCase):
         levels = (1 << bits) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
         error_bound = diagonal / (2 * levels)
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 payload = encode_mesh(
@@ -145,7 +145,7 @@ class CodecTests(unittest.TestCase):
             encode_mesh(self.vertices, self.faces, method="magic")
 
     def test_bfs_and_morton_are_valid_permutations_and_preserve_face_mapping(self):
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 self.assertEqual(len(order), len(self.vertices))
@@ -160,7 +160,7 @@ class CodecTests(unittest.TestCase):
                 self.assertTrue(np.all(reordered_faces < len(self.vertices)))
 
     def test_all_orderings_roundtrip_baseline_and_prithvi(self):
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             for method in ("baseline", "prithvi"):
                 with self.subTest(ordering=ordering, method=method):
@@ -176,7 +176,7 @@ class CodecTests(unittest.TestCase):
                     self.assertEqual(header["vertex_ordering"], ordering)
 
     def test_prithvi_and_baseline_positions_equal_for_each_ordering(self):
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 base, _, _ = decode_mesh(encode_mesh(
                     self.vertices, self.faces, bits=16, method="baseline", ordering=ordering
@@ -190,7 +190,7 @@ class CodecTests(unittest.TestCase):
         levels = (1 << 16) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
         error_bound = diagonal / (2 * levels)
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 payload = encode_mesh(
@@ -225,7 +225,7 @@ class CodecTests(unittest.TestCase):
         levels = (1 << 16) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
         error_bound = diagonal / (2 * levels)
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 payload = encode_mesh(
@@ -257,7 +257,7 @@ class CodecTests(unittest.TestCase):
         levels = (1 << 16) - 1
         diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
         error_bound = diagonal / (2 * levels)
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             with self.subTest(ordering=ordering):
                 order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
                 payload = encode_mesh(
@@ -282,7 +282,7 @@ class CodecTests(unittest.TestCase):
         error_budget = np.linalg.norm(spans / (2 * levels))
         candidates = []
         methods = ("baseline", "prithvi", "tangent", "weighted_tangent", "chandas_tangent", "chandas_adaptive_tangent")
-        for ordering in ("source", "bfs", "morton"):
+        for ordering in ("source", "bfs", "morton", "predictive"):
             order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
             ordered_vertices = self.vertices[order]
             for method in methods:
@@ -306,7 +306,7 @@ class CodecTests(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertEqual(len(automatic), min(len(payload) for payload in candidates))
         self.assertEqual(faces.shape, self.faces.shape)
-        self.assertIn(header["vertex_ordering"], ("source", "bfs", "morton"))
+        self.assertIn(header["vertex_ordering"], ("source", "bfs", "morton", "predictive"))
         self.assertIn(
             header["coordinate_coder"],
             (
