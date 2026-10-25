@@ -1,0 +1,7 @@
+name,source_obj_bytes,simple_reference_bytes,mo3d_bytes,size_change_vs_reference_pct,encode_median_ms,decode_median_ms,max_vertex_error
+box.obj,425,346,393,-13.58,0.088,0.060,0
+cylinder.obj,5591,1100,962,12.55,0.281,0.175,1.08e-05
+icosphere.obj,173885,29525,30265,-2.51,10.653,5.523,2.41e-05
+torus.obj,55051,8669,3690,57.43,1.648,1.256,2.74e-05
+uv_sphere.obj,121869,17040,8212,51.81,3.324,2.761,2.52e-05
+wavy_grid.obj,243639,39974,17678,55.78,6.316,5.535,2.12e-05
