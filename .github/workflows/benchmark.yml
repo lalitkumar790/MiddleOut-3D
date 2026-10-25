@@ -48,13 +48,13 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | Draco B | Draco savings % | Draco max error | adaptive best")
+          print("mesh | order | baseline B | Prithvi B | tangent B | weighted B | Draco B | Draco bits | error target met | Draco max error | adaptive best")
           for row in report["results"]:
               for result in row["ordering_results"]:
                   print(
                       f'{row["name"]} | {result["ordering"]} | {result["baseline_bytes"]} | {result["prithvi_bytes"]} | '
                       f'{result["tangent_bytes"]} | {result["weighted_tangent_bytes"]} | {result["draco_bytes"]} | '
-                      f'{result["draco_size_reduction_vs_baseline_pct"]}% | {result["draco_max_vertex_error"]} | '
+                      f'{result["draco_quantization_bits"]} | {result["draco_error_budget_met"]} | {result["draco_max_vertex_error"]} | '
                       f'{row["best_candidate_method"]}/{row["best_candidate_ordering"]}/{row["best_candidate_bytes"]} B'
                   )
           if report["errors"]:
@@ -72,6 +72,8 @@ jobs:
                           raise SystemExit(f'Geometry error bound exceeded: {row["name"]}/{result["ordering"]}/{method}')
                   if not result["draco_topology_equivalent"]:
                       raise SystemExit(f'Draco topology reconstruction failed: {row["name"]}/{result["ordering"]}')
+                  if not result["draco_error_budget_met"]:
+                      raise SystemExit(f'Draco could not meet the max-error budget in its tested quantization range: {row["name"]}/{result["ordering"]}')
 
           PY
       - name: Upload benchmark report
