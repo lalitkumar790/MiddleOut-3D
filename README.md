@@ -17,10 +17,12 @@ Relevant existing work:
 
 ## Current prototype
 
-MO3D has two coordinate coding methods:
+MO3D has two versioned coordinate coding methods:
 
-- **Baseline:** per-axis quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
-- **Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, mapped to unsigned integers with zigzag coding, encoded as varints, then compressed with zlib.
+- **MO3D v1 baseline:** per-axis quantized XYZ coordinates stored as fixed-width integers and compressed with zlib.
+- **MO3D v2 Prithvi:** quantized coordinates encoded as signed residuals from a deterministic earlier mesh-neighbor, mapped to unsigned integers with zigzag coding, encoded as varints, then compressed with zlib.
+
+The separate format version prevents an older v1 decoder from interpreting Prithvi residual bytes as absolute coordinates. The current decoder reads both v1 baseline and v2 Prithvi streams.
 
 Both methods share the same quantizer, metadata and triangle-index stream. This makes the comparison useful for isolating the coordinate coder, though the total file still contains headers and zlib stream overhead.
 
