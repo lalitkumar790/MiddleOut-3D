@@ -45,3 +45,13 @@ E001 shows a promising 32.9206% aggregate size reduction on the six synthetic fi
 - Decoder finds the kth distance with partition selection, counts all candidates below it, then resolves equal-distance candidates in ascending vertex-ID order.
 - Both procedures are expected O(V) per gate instead of O(V log V); encoder and decoder use the same distance computation and exact equality relation for tie handling.
 - New deterministic tests compare every selected rank against the previous full lexicographic sort, including duplicate positions and equidistant candidates. Full payload benchmarks will determine the actual speed benefit; no speedup is presumed until run E002 completes.
+
+
+## E001 — complete-payload distance-rank benchmark
+
+- GitHub Actions run: https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40228340769
+- Source commit tested: 42023a592802d014f8ed340a1ee47ad48998fdac.
+- Configuration: six deterministic synthetic fixtures, 16-bit positions, source/BFS/Morton vertex orderings, and three encode/decode timing repetitions.
+- Paired summary: paired_cases=18; baseline_total_bytes=193365; distance_ranked_total_bytes=129708; size_reduction_pct=32.9206; wins=13; ties=0; losses=5; mean_baseline_connectivity_bytes=3811.7222; mean_ranked_connectivity_bytes=82.2778; all_topology_exact=True; all_error_budgets_met=True.
+- Unsupported mesh/order cases: none.
+- The report stores full bitstream, connectivity-stream, encode/decode, max-error, RMSE, topology and error-budget metrics per paired case. A positive result is limited to this synthetic corpus and does not imply Draco superiority.
