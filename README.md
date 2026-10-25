@@ -134,6 +134,8 @@ A published result must compare equivalent payloads and attribute sets, with the
 
 MO3D v1 is experimental. Its decoder validates headers, stream lengths, coordinate counts, and triangle indices, but this has not been audited for hostile input or production use. Do not decode untrusted files in a privileged workflow.
 
-## First measured baseline
+## Measured baseline and Prithvi experiment
 
-See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) and the machine-readable [`results/baseline.json`](results/baseline.json) / [`results/baseline.csv`](results/baseline.csv). The initial synthetic-fixture run is mixed: MO3D v1 improves file size versus a simple quantized-position + zlib/fixed-width-index reference on some fixtures but loses on others. This is the expected starting point for controlled experiments, not evidence of a universal compression breakthrough.
+See [`BASELINE_RESULTS.md`](BASELINE_RESULTS.md) for the latest hosted baseline-versus-Prithvi comparison. The archived [Prithvi JSON report](results/prithvi_ci_2026-10-25.json) and [CSV report](results/prithvi_ci_2026-10-25.csv) record the six-fixture run. The earlier [initial baseline JSON](results/baseline.json) / [CSV](results/baseline.csv) remain as the pre-Prithvi exploratory snapshot.
+
+The first Prithvi run reduced the sum of encoded bytes across six synthetic fixtures by 23.4974%, but it was smaller on only four of six meshes and slower than the baseline for every fixture. That is a workload-specific result, not evidence of a universal compression breakthrough. No comparison against Draco or LZ4 has been performed.
