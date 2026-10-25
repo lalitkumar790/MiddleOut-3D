@@ -41,8 +41,8 @@ class CodecTests(unittest.TestCase):
         self.assertTrue(np.array_equal(vertices, baseline_vertices))
         self.assertIn("prithvi", header["coordinate_coder"])
         self.assertEqual(header["version"], 2)
-        self.assertTrue(prithvi_payload.startswith(b"MO3D\\x02"))
-        self.assertTrue(baseline_payload.startswith(b"MO3D\\x01"))
+        self.assertEqual(prithvi_payload[:5], bytes([77, 79, 51, 68, 2]))
+        self.assertEqual(baseline_payload[:5], bytes([77, 79, 51, 68, 1]))
         self.assertLessEqual(
             np.linalg.norm(vertices - self.vertices, axis=1).max(),
             np.linalg.norm(
