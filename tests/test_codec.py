@@ -99,6 +99,35 @@ class CodecTests(unittest.TestCase):
                 ))
                 self.assertTrue(np.array_equal(base, predicted))
 
+    def test_tangent_codec_roundtrip_and_error_bound_across_orderings(self):
+        levels = (1 << 16) - 1
+        diagonal = np.linalg.norm(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        error_bound = diagonal / (2 * levels)
+        for ordering in ("source", "bfs", "morton"):
+            with self.subTest(ordering=ordering):
+                order = vertex_order_for_mesh(self.vertices, self.faces, ordering)
+                payload = encode_mesh(
+                    self.vertices, self.faces, bits=16, method="tangent", ordering=ordering
+                )
+                vertices, faces, header = decode_mesh(payload)
+                restored_vertices = np.empty_like(vertices)
+                restored_vertices[order] = vertices
+                restored_faces = order[faces]
+                errors = np.linalg.norm(restored_vertices - self.vertices, axis=1)
+
+                self.assertEqual(header["version"], 3)
+                self.assertEqual(header["coordinate_coder"], "tangent-parallelogram-residual-varint-zlib")
+                self.assertEqual(payload[:5], bytes([77, 79, 51, 68, 3]))
+                self.assertGreaterEqual(header["tangent_predictive_vertices"], 0)
+                self.assertTrue(np.array_equal(restored_faces, self.faces))
+                self.assertLessEqual(float(errors.max()), error_bound * 1.0001 + 1e-12)
+
+    def test_tangent_mode_rejects_zero_extent_mesh(self):
+        vertices = np.zeros((3, 3), dtype=np.float64)
+        faces = np.array([[0, 1, 2]], dtype=np.int64)
+        with self.assertRaises(CodecError):
+            encode_mesh(vertices, faces, method="tangent")
+
     def test_legacy_v1_header_without_new_coder_fields_still_decodes(self):
         payload = encode_mesh(self.vertices, self.faces, bits=16, method="baseline")
         header_length = struct.unpack(">I", payload[5:9])[0]
