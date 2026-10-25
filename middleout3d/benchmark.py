@@ -1,4 +1,4 @@
-"""Reproducible first-pass benchmark for MiddleOut-3D."""
+"""Reproducible baseline-vs-Prithvi benchmark across vertex orderings."""
 from __future__ import annotations
 
 import csv
@@ -230,7 +230,7 @@ def benchmark_directory(input_dir: str | Path, output_json: str | Path, bits: in
         "report_version": 2,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version, "platform": platform.platform(), "numpy": np.__version__},
-        "configuration": {"position_bits": bits, "repeats": repeats, "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
+        "configuration": {"position_bits": bits, "repeats": repeats, "methods": ["baseline", "prithvi"], "vertex_orderings": list(ORDERINGS), "timing_statistic": "median wall-clock time via perf_counter", "warmup": "not explicitly separated"},
         "results": rows, "errors": errors,
         "conclusion_policy": "This prototype is not considered better than LZ4 or Draco unless comparison uses equivalent data, attribute preservation, distortion constraints, and repeatable encode/decode measurements.",
     }
