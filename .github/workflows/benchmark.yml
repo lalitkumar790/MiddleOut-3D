@@ -47,11 +47,13 @@ jobs:
           python - <<'PY'
           import json
           report = json.load(open("results/ci-benchmark.json", encoding="utf-8"))
-          print("mesh | baseline bytes | Prithvi bytes | size reduction vs baseline | topology exact | max position error")
+          print("mesh | baseline B | Prithvi B | size delta % | baseline enc/dec ms | Prithvi enc/dec ms | topology | max error")
           for row in report["results"]:
               print(
                   f'{row["name"]} | {row["mo3d_lossy_geometry_bytes"]} | {row["prithvi_bytes"]} | '
                   f'{row["prithvi_size_reduction_vs_mo3d_baseline_pct"]}% | '
+                  f'{row["mo3d_encode_median_ms"]}/{row["mo3d_decode_median_ms"]} | '
+                  f'{row["prithvi_encode_median_ms"]}/{row["prithvi_decode_median_ms"]} | '
                   f'{row["prithvi_topology_exact"]} | {row["prithvi_geometry_max_vertex_error"]}'
               )
           if report["errors"]:
