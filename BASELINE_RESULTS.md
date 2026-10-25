@@ -1,3 +1,60 @@
+# Predictive ordering experiment: negative result
+
+**Run:** [GitHub Actions benchmark](https://github.com/lalitkumar790/MiddleOut-3D/actions/runs/40195070244)  
+**Archived data:** [JSON](results/predictive_ordering_study_2026-10-25.json) · [CSV](results/predictive_ordering_study_2026-10-25.csv)  
+**Configuration:** six synthetic OBJ meshes, 16 coordinate bits/axis, one timing repetition, seven in-house coders, four vertex orderings, plus DracoPy 2.0.0 swept over quantization bits 14–18 to meet each mesh's conservative error budget.
+
+The predictive ordering greedily prioritized vertices by the estimated varint length of their coordinate residual against the latest visited mesh neighbor. It is a modern heuristic inspired by the general idea of designed pattern orderings, not an algorithm from a Vedic text.
+
+## Aggregate encoded sizes
+
+| Coder | Source order | BFS | Morton | Predictive |
+|---|---:|---:|---:|---:|
+| Baseline | 62,652 B | 50,330 B | 80,383 B | 69,922 B |
+| Prithvi | 48,132 B | 37,041 B | 70,430 B | 54,050 B |
+| Tangent | 49,044 B | 36,077 B | 70,387 B | 58,852 B |
+| Weighted tangent | 53,828 B | 41,869 B | 76,483 B | 63,712 B |
+| Normal-fine tangent | 54,259 B | 42,297 B | 77,054 B | 64,217 B |
+| Chandas | 54,570 B | 42,669 B | 77,320 B | 64,628 B |
+| Adaptive Chandas | 53,814 B | 42,421 B | 76,563 B | 63,616 B |
+
+**Predictive lost on all seven aggregate comparisons.** Compared with BFS, its total size was 38.9% larger for baseline, 45.9% larger for Prithvi, and 63.1% larger for the tangent coder. It was also larger than source order for every coder. It was never the best method/order candidate on any of the six fixtures.
+
+## Runtime cost
+
+In the one-repeat CI run, the sum of baseline encoding medians across six meshes was approximately:
+
+| Ordering | Sum of baseline encode times |
+|---|---:|
+| Source | 16.51 ms |
+| BFS | 44.92 ms |
+| Morton | 17.44 ms |
+| Predictive | 411.06 ms |
+
+The predictive ordering cost about 9.2× the BFS baseline-encoding time and 24.9× the source-order baseline-encoding time in this run. These are single-run timings without a separate warmup, so treat them as indicative; the size results are deterministic under this configuration.
+
+## Draco comparison
+
+The best observed in-house candidate for each mesh, selected independently after evaluating methods and orderings, was 25,807 bytes in aggregate. The corresponding Draco outputs totalled 28,275 bytes. The in-house winner was smaller on torus, UV sphere and wavy grid; Draco was smaller on box, cylinder and icosphere. The 8.73% aggregate advantage is a per-mesh portfolio result, not evidence that one fixed in-house codec beats Draco. All are geometry-only outputs, and our decoder drops normals, UVs, colors, textures, materials and original file metadata.
+
+| Mesh | Best in-house candidate | In-house bytes | Draco bytes | Smaller output |
+|---|---|---:|---:|---|
+| Box | Baseline + BFS | 630 | 80 | Draco |
+| Cylinder | Tangent + source | 1,072 | 460 | Draco |
+| Icosphere | Tangent + BFS | 11,746 | 8,398 | Draco |
+| Torus | Weighted tangent + source | 2,486 | 4,044 | In-house |
+| UV sphere | Weighted tangent + BFS | 4,463 | 6,302 | In-house |
+| Wavy grid | Prithvi + source | 5,410 | 8,991 | In-house |
+
+## Decision
+
+- Keep predictive available for further research/debugging, but exclude it from the automatic encoder until a revised objective shows a measured win. The current heuristic optimizes a proxy for coordinate residuals and ignores the cost of the remapped face-index stream.
+- Keep BFS as a useful candidate for source/BFS/Morton portfolio comparisons, but do not hard-code it as universally optimal.
+- Keep Chandas-style enumerative coding as a measured experiment only. It did not consistently beat weighted tangent in these fixtures.
+- The next efficiency target should be a compact binary metadata header and improved mesh connectivity coding. The current JSON header and simple face-index delta stream make tiny meshes particularly unfavorable compared with Draco.
+
+---
+
 # Vertex ordering study: source vs BFS vs Morton
 
 **Run date:** 25 October 2026  
