@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 — Chandas-inspired enumerative sparse residuals
+
+- Added MO3D v6 `chandas_tangent`, combining the weighted local tangent-space predictor with a 64-symbol sparse pattern coder.
+- Added combinatorial subset ranking/unranking, omitting zero residual positions and preserving exact decoding of the integer symbol stream.
+- Extended `--method auto` to evaluate the Chandas candidate at all supported vertex orderings.
+- Added tests for subset-pattern coding, malformed sparse streams, v6 signature/version compatibility, reconstruction error and topology across source/BFS/Morton orderings.
+- Expanded benchmark reporting and GitHub Actions checks to compare Chandas with existing in-house methods and Google Draco.
+- Documented the connection to Piṅgala's pattern enumeration as a modern inspiration, plus the limitations and sources. No claim is made that the exact codec appears in a Sanskrit text.
+
 ## 0.3.0 — Non-uniform local-frame quantization experiment
 
 - Added MO3D v5 `normal_fine_tangent`: a weighted tangent-space predictor with finer quantization along the local surface normal and coarser steps in the two tangential directions.
