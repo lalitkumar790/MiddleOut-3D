@@ -103,20 +103,17 @@ def _quantize(vertices: np.ndarray, bits: int) -> tuple[np.ndarray, np.ndarray, 
 def _mesh_parents(faces: np.ndarray, vertex_count: int) -> np.ndarray:
     """Pick each vertex's greatest lower-index mesh neighbor as its causal parent.
 
-    For every edge (u, v), the higher-index endpoint uses the lower endpoint as
-    a possible predictor. The maximum eligible parent gives a deterministic
-    choice that the decoder can recompute from the decoded face stream alone.
-    A vertex with no earlier adjacent vertex has parent -1 and is coded absolute.
+    The implementation vectorizes edge extraction while keeping the parent
+    selection deterministic. For every undirected edge, the higher-index
+    endpoint can use the lower endpoint as a predictor. A vertex with no
+    earlier adjacent vertex has parent -1 and is coded absolute.
     """
     parents = np.full(vertex_count, -1, dtype=np.int64)
-    for tri in faces:
-        a, b, c = (int(x) for x in tri)
-        for u, v in ((a, b), (b, c), (c, a)):
-            if u == v:
-                continue
-            hi, lo = (u, v) if u > v else (v, u)
-            if hi > lo and lo > parents[hi]:
-                parents[hi] = lo
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]), axis=0)
+    lo = np.minimum(edges[:, 0], edges[:, 1])
+    hi = np.maximum(edges[:, 0], edges[:, 1])
+    valid = hi > lo
+    np.maximum.at(parents, hi[valid], lo[valid])
     return parents
 
 
@@ -146,12 +143,13 @@ def _decode_face_stream(face_raw: bytes, vertex_count: int, face_count: int) -> 
 def _encode_prithvi_coordinates(quantized: np.ndarray, faces: np.ndarray, level: int) -> bytes:
     """Encode quantized coordinate residuals against earlier adjacent vertices."""
     parents = _mesh_parents(faces, len(quantized))
+    predictors = np.zeros_like(quantized, dtype=np.int64)
+    parented = np.flatnonzero(parents >= 0)
+    predictors[parented] = quantized[parents[parented]]
+    residuals = (quantized - predictors).reshape(-1)
     residual_stream = bytearray()
-    for index, q in enumerate(quantized):
-        parent = int(parents[index])
-        prediction = quantized[parent] if parent >= 0 else np.zeros(3, dtype=np.int64)
-        for residual in (q - prediction):
-            residual_stream.extend(_encode_varint(_zigzag_encode(int(residual))))
+    for residual in residuals:
+        residual_stream.extend(_encode_varint(_zigzag_encode(int(residual))))
     return zlib.compress(bytes(residual_stream), level)
 
 
